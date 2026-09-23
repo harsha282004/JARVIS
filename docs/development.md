@@ -53,6 +53,21 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Voice pipeline (Phase 1)
+
+See `docs/voice-system.md` for full setup (model downloads, Ollama, and
+the manual end-to-end test). Quick start once models/Ollama are ready:
+
+```powershell
+python scripts/run_voice.py
+```
+
+Voice-specific tests:
+```powershell
+pytest                     # unit tests, no hardware/models/network required
+pytest tests/integration   # real providers; self-skips whatever isn't configured
+```
+
 ## Project layout
 
 See `docs/architecture.md` for full directory responsibilities.

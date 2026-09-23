@@ -36,8 +36,41 @@ class Settings(BaseSettings):
 
     # --- LLM provider ---
     LLM_PROVIDER: str = "ollama"
+    # Model name for whichever LLM_PROVIDER is active (e.g. an Ollama model
+    # tag such as "llama3"). Phase 1 intentionally does not add a separate
+    # OLLAMA_MODEL field — LLM_MODEL is the single source of truth so the
+    # provider abstraction stays provider-agnostic.
     LLM_MODEL: str = "llama3"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+
+    # --- Voice: wake word ---
+    WAKE_WORD_ENABLED: bool = True
+    WAKE_WORD_PROVIDER: str = "openwakeword"
+    # Path to a downloaded openWakeWord ONNX model file (e.g. hey_jarvis_v0.1.onnx).
+    # No default: must be set explicitly before the wake-word provider can start.
+    WAKE_WORD_MODEL_PATH: str = ""
+    WAKE_WORD_THRESHOLD: float = 0.5
+
+    # --- Voice: audio I/O ---
+    # Empty string = system default input/output device.
+    MICROPHONE_DEVICE: str = ""
+    AUDIO_SAMPLE_RATE: int = 16000
+    # Fixed capture window for a single utterance after wake-word activation.
+    # Phase 3 will replace this with proper end-of-speech detection.
+    AUDIO_LISTEN_SECONDS: float = 5.0
+
+    # --- Voice: speech-to-text ---
+    STT_PROVIDER: str = "faster_whisper"
+    STT_MODEL: str = "base"
+    STT_LANGUAGE: str = "en"
+    STT_DEVICE: str = "cpu"
+
+    # --- Voice: text-to-speech ---
+    TTS_PROVIDER: str = "piper"
+    # Path to a downloaded Piper voice model (.onnx). No default: must be
+    # set explicitly before the TTS provider can start.
+    TTS_MODEL_PATH: str = ""
+    TTS_VOICE: str = "en_US-lessac-medium"
 
 
 @lru_cache

@@ -23,6 +23,11 @@ htmlcov/
 *.sqlite3
 *.db
 
+# Downloaded voice models (large binaries — fetched locally, not committed)
+/models/
+*.onnx
+*.tflite
+
 # Node / frontend
 frontend/node_modules/
 frontend/dist/

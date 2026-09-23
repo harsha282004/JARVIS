@@ -31,15 +31,66 @@
 
 ### Explicitly out of scope for Phase 0
 
-See "What Phase 0 intentionally does not implement" in
-`docs/architecture.md`. In short: voice, agent reasoning/execution, memory,
-all integrations, desktop packaging, the frontend, and production
-deployment. These are future-phase requirements, tracked against the
-JARVIS master specification but not implemented here.
+See "What Phase 0 intentionally did not implement" in
+`docs/architecture.md`. In short (as of Phase 0): voice, agent
+reasoning/execution, memory, all integrations, desktop packaging, the
+frontend, and production deployment.
+
+## Phase 1 — Voice Engine
+
+### Functional requirements
+
+- Local wake-word detection for "Hey JARVIS" (openWakeWord), with no
+  vendor account/access key required.
+- Local speech-to-text (Faster-Whisper) converting captured audio to text.
+- An `OllamaProvider` implementation of the Phase 0 `LLMProvider`
+  interface, calling a local Ollama server.
+- Local text-to-speech (Piper) converting the LLM's response to audio and
+  playing it through the speakers.
+- `VoiceEngine` (`voice/engine.py`) driving one wake-word -> response
+  cycle through a `WAITING -> LISTENING -> TRANSCRIBING -> THINKING ->
+  SPEAKING -> WAITING` state machine, with no persisted conversation state.
+- All new configuration added to the existing Phase 0 `Settings` class —
+  no second configuration system.
+- The LLM must never claim access to email, calendar, messages, files,
+  tasks, or personal memory it doesn't have (Phase 1 has none of these).
+- A provider (wake word, STT, LLM, TTS) that cannot start (missing model
+  file, unreachable server, bad config) must fail with a clear error, not
+  fabricate a response.
+
+### Non-functional requirements
+
+- Every provider stays behind its Phase 0/1 interface — replaceable via
+  configuration, not hardcoded call sites.
+- No continuous microphone upload, no silent/background audio recording,
+  no raw audio persisted to disk, no microphone data exposed via any API.
+- No secrets or credentials logged; no API keys/passwords/tokens
+  hardcoded.
+- Only genuinely required dependencies added (see `requirements.txt`);
+  no LangGraph/LangChain in Phase 1.
+- Deterministic unit tests (mocked backends) plus integration tests that
+  self-skip when real models/servers aren't available — never a fabricated
+  pass.
+
+### Explicitly out of scope for Phase 1
+
+See "What Phase 1 intentionally does not implement" in
+`docs/architecture.md` and the non-goals list in `docs/voice-system.md`.
+In short: multi-turn conversation, conversation memory, personal
+memory/RAG, a knowledge graph, all integrations (Gmail, Calendar,
+messaging, YouTube, Spotify, browser/desktop automation), tasks/reminders,
+proactive notifications, remote access, Windows startup/tray, the React
+dashboard, multi-agent orchestration, research mode, vision, and
+production deployment.
 
 ## Environment requirements
 
 - Python 3.11+
 - PostgreSQL (for database connectivity verification; not required to run
   the test suite or the `/health` endpoint)
-- See `requirements.txt` for Python dependencies.
+- Windows microphone and speaker devices (for the voice pipeline;
+  `pytest` itself does not require them)
+- Ollama, installed and running locally with a pulled model, for real LLM
+  responses (unit tests mock this; only `tests/integration` needs it)
+- See `requirements.txt` for Python dependencies, and
+  `docs/voice-system.md` for voice-specific model downloads.

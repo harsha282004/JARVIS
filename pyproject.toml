@@ -7,6 +7,9 @@ requires-python = ">=3.11"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "integration: exercises a real local backend (Ollama, a downloaded model file); skips itself when unavailable rather than faking a pass.",
+]
 
 [tool.mypy]
 python_version = "3.11"
