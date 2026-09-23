@@ -3,17 +3,20 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 1 — Voice Engine
+## Current status: Phase 2 — Windows Runtime
 
-Phase 0 (foundation) is complete, and Phase 1 adds a functional local
+Phase 0 (foundation) and Phase 1 (voice engine) are complete. Phase 2 runs
+the voice engine as a persistent Windows background app with a system-tray
+icon (status, pause/resume, restart, exit), graceful shutdown, sleep/resume
+recovery, and optional start-with-Windows. Phase 1 provides a functional local
 voice pipeline: say "Hey JARVIS", ask a question, get a spoken answer from
 a local LLM via Ollama. **No agent reasoning/tools, memory, personal RAG,
-integrations (Gmail, Calendar, messaging, ...), desktop packaging, or
+integrations (Gmail, Calendar, messaging, ...), installer/packaging, or
 frontend functionality is implemented yet**, and there is no multi-turn
 conversation — each activation is a single, independent exchange.
 
 See `docs/architecture.md` for full scope, `docs/voice-system.md` for the
-voice pipeline specifically, and `docs/requirements.md` for what each
+voice pipeline, `docs/windows-runtime.md` for the Windows runtime, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -26,7 +29,7 @@ phase does and does not cover.
 | Database   | PostgreSQL, SQLAlchemy, Alembic |
 | Voice      | openWakeWord (wake word), Faster-Whisper (STT), Piper (TTS) — implemented |
 | Frontend   | React, Tailwind CSS (planned) |
-| Desktop    | Windows background app, system tray (planned) |
+| Desktop    | Windows background app + system tray (pystray) — implemented; installer planned |
 
 ## Architecture overview
 
@@ -35,11 +38,11 @@ backend/        FastAPI application (API, core, models, services)
 agent/          Agent boundary: planner, memory, tools, orchestrator (interfaces only)
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
 integrations/   External-service boundary: gmail, calendar, messaging, ... (interfaces only)
-desktop/        Windows shell: launcher, tray, service (not implemented)
+desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) — implemented
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system docs
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime docs
 scripts/        Operational scripts (check_db.py, run_voice.py)
 ```
 
@@ -79,11 +82,24 @@ ollama pull llama3
 python scripts/run_voice.py
 ```
 
-## Known limitations (Phase 1)
+## Windows runtime
+
+```powershell
+python -m desktop.launcher                    # run with tray icon
+python -m desktop.launcher --enable-startup   # optional: start with Windows
+python -m desktop.launcher --disable-startup
+```
+
+See [`docs/windows-runtime.md`](docs/windows-runtime.md) for the tray menu,
+lifecycle, startup integration, troubleshooting and limitations.
+
+## Known limitations
 
 - Fixed-duration listening window after "Hey JARVIS" (no end-of-speech
   detection yet).
 - No multi-turn conversation, context, or interruption handling.
+- Runtime: no installer or Windows service; no external control besides the
+  tray/Ctrl+C; sleep is detected after the fact (see the runtime doc).
 - JARVIS has no memory, Gmail, Calendar, messaging, or RAG — it will say
   so if asked, rather than inventing an answer.
 
@@ -96,10 +112,10 @@ permission boundary before reaching a tool or external system:
 
 ## Roadmap
 
-Phase 0 established the foundation; Phase 1 (this repository) adds the
-voice engine. Later phases — agent execution/tools, memory/RAG,
-integrations (Gmail, Calendar, messaging), desktop packaging, and the
+Phase 0 established the foundation, Phase 1 added the voice engine and
+Phase 2 the Windows runtime. Later phases — agent execution/tools, memory/RAG,
+integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any
 capability beyond `GET /health`, database connectivity checking, and the
-single-turn voice pipeline described above currently works.
+single-turn voice pipeline (run as a tray app) described above currently works.

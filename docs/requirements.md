@@ -83,11 +83,45 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 2 — Windows Runtime
+
+### Functional requirements
+
+- `python -m desktop.launcher` runs JARVIS as a long-lived background
+  process (no VS Code/terminal needed; `pythonw` for no console window),
+  reusing the Phase 1 `VoiceEngine`/bootstrap.
+- Explicit lifecycle states STARTING, RUNNING, PAUSED, STOPPING, STOPPED,
+  ERROR, owned by `RuntimeManager`; idempotent, safe shutdown that releases
+  the microphone.
+- System tray icon showing status with Start/Resume, Pause, Restart, Exit.
+- Runtime-level pause/resume (microphone released while paused).
+- Recovery after Windows sleep (microphone reacquired) where practical.
+- Optional, explicit, user-level start-with-Windows (no admin, no installer).
+- Status (runtime state, voice state, startup time, last error, microphone
+  active) and lifecycle logging via the existing logging system.
+- Engine/microphone failures surface as ERROR without killing the tray.
+- Only `JARVIS_RUNTIME_ENABLED` and `JARVIS_TRAY_ENABLED` added to the
+  existing `Settings`.
+
+### Non-functional requirements
+
+- Runtime contains no LLM/memory/integration logic; the Phase 1 state machine
+  is unchanged apart from two lifecycle hooks.
+- New dependencies limited to `pystray` and `Pillow` (tray).
+- Deterministic tests with fakes, clearly separated from manual Windows checks.
+
+### Explicitly out of scope for Phase 2
+
+Installer/packaging, Windows service, IPC/remote control, and everything
+listed as out of scope for Phase 1 (multi-turn conversation, agent,
+memory, integrations, dashboard, ...).
+
 ## Environment requirements
 
 - Python 3.11+
 - PostgreSQL (for database connectivity verification; not required to run
   the test suite or the `/health` endpoint)
+- A Windows desktop session (for the tray; `JARVIS_TRAY_ENABLED=false` runs headless)
 - Windows microphone and speaker devices (for the voice pipeline;
   `pytest` itself does not require them)
 - Ollama, installed and running locally with a pulled model, for real LLM

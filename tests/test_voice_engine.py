@@ -14,6 +14,8 @@ from voice.engine import VoiceEngine, VoiceState
 
 
 class FakeAudioInput:
+    is_open = False
+
     def __init__(self, wake_after: int = 1):
         self.sample_rate = 16000
         self._reads = 0
@@ -187,3 +189,18 @@ def test_run_forever_recovers_from_provider_error(monkeypatch):
         engine.run_forever()
 
     assert calls["n"] == 2
+
+
+def test_run_once_returns_without_cycle_when_stop_requested():
+    engine = _make_engine()
+    engine._wakeword = FakeWakeWord(trigger_on_call=10_000)  # never wakes
+
+    assert engine.run_once(should_stop=lambda: True) is None
+    assert engine.state == VoiceState.WAITING
+    assert engine._audio_input.closed  # microphone released on stop
+
+
+def test_microphone_active_reflects_audio_input():
+    engine = _make_engine()
+    engine._audio_input.is_open = True
+    assert engine.microphone_active is True

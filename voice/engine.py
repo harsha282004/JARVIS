@@ -7,6 +7,8 @@ or personal RAG yet, so the system prompt tells the LLM not to claim it
 does.
 """
 
+from collections.abc import Callable
+
 import numpy as np
 
 from backend.core.llm.base import LLMProvider, LLMProviderError
@@ -70,15 +72,27 @@ class VoiceEngine:
         self._audio_output.play(samples, sample_rate)
         logger.info("TTS_COMPLETED")
 
-    def run_once(self) -> str | None:
+    @property
+    def microphone_active(self) -> bool:
+        """True while the microphone stream is open."""
+        return self._audio_input.is_open
+
+    def run_once(self, should_stop: Callable[[], bool] | None = None) -> str | None:
         """Wait for the wake word, handle exactly one utterance, then return
         to WAITING. Returns the LLM's response text, or None if nothing
-        intelligible was transcribed."""
+        intelligible was transcribed.
+
+        `should_stop` is a lifecycle hook (used by the Windows runtime): it is
+        polled while waiting for the wake word, and if it returns True the
+        microphone is released and this returns None without a cycle."""
         logger.info("VOICE_ENGINE_STARTED state=%s", self.state)
         self.state = VoiceState.WAITING
 
         with self._audio_input:
             while True:
+                if should_stop is not None and should_stop():
+                    self.state = VoiceState.WAITING
+                    return None
                 frame = self._audio_input.read_frame()
                 if self._wakeword.process(frame):
                     logger.info("WAKE_WORD_DETECTED")

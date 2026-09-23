@@ -53,6 +53,16 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Windows runtime (Phase 2)
+
+```powershell
+python -m desktop.launcher     # tray app + voice engine (needs Phase 1 models/config)
+```
+
+Runtime tests (`tests/test_runtime_*.py`, `tests/test_launcher_tray.py`) use
+fakes and need no hardware. See `docs/windows-runtime.md` for manual Windows
+checks, startup integration and troubleshooting.
+
 ## Voice pipeline (Phase 1)
 
 See `docs/voice-system.md` for full setup (model downloads, Ollama, and

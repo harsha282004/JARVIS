@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     TTS_MODEL_PATH: str = ""
     TTS_VOICE: str = "en_US-lessac-medium"
 
+    # --- Windows runtime ---
+    # Master switch: when false, `python -m desktop.launcher` exits immediately.
+    # Lets a startup-launched JARVIS be disabled without removing the shortcut.
+    JARVIS_RUNTIME_ENABLED: bool = True
+    # false = run without a tray icon (headless; stop with Ctrl+C).
+    JARVIS_TRAY_ENABLED: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -33,6 +33,10 @@ class AudioInput:
         self._device = _resolve_device(device)
         self._stream: sd.InputStream | None = None
 
+    @property
+    def is_open(self) -> bool:
+        return self._stream is not None
+
     def open(self) -> None:
         try:
             self._stream = sd.InputStream(

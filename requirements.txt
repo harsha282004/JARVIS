@@ -28,3 +28,7 @@ faster-whisper==1.2.1
 
 # --- Voice: text-to-speech ---
 piper-tts==1.8.0
+
+# --- Windows runtime: system tray ---
+pystray==0.19.5
+Pillow==12.3.0

@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 1** (voice engine), built on the **Phase 0** foundation and the
+**Phase 2** (Windows runtime) on top of **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -37,6 +37,16 @@ implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
 
+## Phase 2 scope (Windows runtime)
+
+Phase 2 adds `desktop/`: a `RuntimeManager` that owns the VoiceEngine
+lifecycle (start/pause/resume/restart/shutdown, error state, status), a
+pystray system-tray controller, a sleep/resume watcher, an optional
+Startup-folder shortcut, and the `python -m desktop.launcher` entry point.
+The boundary is `Windows runtime -> RuntimeManager -> VoiceEngine ->
+providers`; the runtime holds no reasoning, memory or integration logic. See
+`docs/windows-runtime.md`.
+
 ## Directory responsibilities
 
 ```
@@ -57,7 +67,9 @@ JARVIS/
 │                         and engine.py (VoiceEngine orchestrator) — see docs/voice-system.md
 ├── integrations/        External-service boundary (gmail/, calendar/, messaging/,
 │                         github/, browser/, documents/) — interfaces only
-├── desktop/              Windows shell (launcher/, tray/, service/) — not implemented
+├── desktop/              Windows runtime: runtime/ (RuntimeManager, state, power), tray/, launcher/
+│                         (entry point, startup shortcut) — see docs/windows-runtime.md
+│                         (service/ is an empty placeholder; no Windows service in Phase 2)
 ├── frontend/             React/Tailwind dashboard — not implemented
 ├── database/             Alembic migration environment (no revisions yet)
 ├── tests/                Automated tests for Phase 0 components
@@ -92,7 +104,7 @@ never calls a Tool directly.** See `docs/security.md`.
 
 ## Technology decisions
 
-| Concern       | Choice                              | Status in Phase 0 |
+| Concern       | Choice                              | Status |
 |---------------|--------------------------------------|--------------------|
 | Backend       | Python, FastAPI, WebSockets          | FastAPI app + `/health` only; no WebSocket endpoint yet |
 | Agent         | LangGraph, LangChain, custom tools   | Boundary/interfaces only; no dependency added yet |
@@ -102,11 +114,12 @@ never calls a Tool directly.** See `docs/security.md`.
 | Embeddings    | SentenceTransformers                 | Not added yet |
 | Voice         | wake-word engine, Whisper/Faster-Whisper, TTS | Implemented: openWakeWord, Faster-Whisper, Piper (see docs/voice-system.md) |
 | Frontend      | React, Tailwind CSS                  | Not scaffolded yet |
-| Desktop       | Windows background app, tray, startup | Not implemented yet |
+| Desktop       | Windows background app, tray, startup | Implemented: pystray tray, Startup-folder shortcut (no installer/service) |
 
-LangGraph/LangChain and voice/ML dependencies are deliberately **not**
-added to `requirements.txt` yet — adding them before they're used would
-violate the "no unnecessary dependencies" principle for this phase.
+LangGraph/LangChain are deliberately **not** added to `requirements.txt`
+yet — adding them before they're used would violate the "no unnecessary
+dependencies" principle. Voice (Phase 1) and tray (Phase 2) dependencies are
+added because those phases use them.
 
 ## Replaceability principle
 
@@ -122,13 +135,18 @@ specifically so it can be swapped without rewriting the core:
 ## What Phase 0 intentionally did not implement
 
 Wake word detection, Whisper/Piper, voice conversation, Ollama inference —
-all added in Phase 1, see below. Still not implemented as of Phase 1: Gmail,
+all added in Phase 1, see below. Still not implemented as of Phase 2: Gmail,
 Google Calendar, WhatsApp/messaging, YouTube, Spotify, browser automation,
-desktop automation, Windows tray/startup, remote access, personal memory,
+desktop automation, installer/packaging, remote access, personal memory,
 personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 2 intentionally does not implement
+
+Installer/packaging, a Windows service, IPC/remote control of the runtime,
+and everything in the Phase 1 list below. The runtime is lifecycle only.
 
 ## What Phase 1 intentionally does not implement
 
