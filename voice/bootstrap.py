@@ -6,7 +6,12 @@ today only one concrete implementation exists per interface.
 """
 
 from agent.brain.brain import AgentBrain
+from agent.memory.models import Confidence
+from agent.memory.policy import MemoryPolicy
+from agent.memory.repository import MemoryRepository
+from agent.memory.service import MemoryService
 from backend.core.config import Settings
+from backend.core.database import SessionLocal
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.ollama_provider import OllamaProvider
@@ -55,6 +60,19 @@ def _build_tts(settings: Settings) -> TTSProvider:
     raise ProviderNotConfiguredError(f"Unknown TTS_PROVIDER '{settings.TTS_PROVIDER}'")
 
 
+def _build_memory(settings: Settings) -> MemoryService | None:
+    if not settings.JARVIS_MEMORY_ENABLED:
+        return None
+    return MemoryService(
+        MemoryRepository(SessionLocal),
+        policy=MemoryPolicy(
+            auto_save=settings.JARVIS_MEMORY_AUTO_SAVE,
+            min_confidence=Confidence[settings.JARVIS_MEMORY_MIN_CONFIDENCE.upper()],
+        ),
+        max_retrieval=settings.JARVIS_MEMORY_MAX_RETRIEVAL,
+    )
+
+
 def _build_conversation(settings: Settings) -> ConversationEngine:
     llm = _build_llm(settings)
     # No tools exist yet, so the brain is given an empty tool catalog.
@@ -68,6 +86,7 @@ def _build_conversation(settings: Settings) -> ConversationEngine:
         max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
         timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
         agent=agent,
+        memory=_build_memory(settings),
         permissions=PermissionManager(
             tools=[],  # no tools exist yet, so every requested tool is denied as unknown
             audit=AuditLog(enabled=settings.JARVIS_PERMISSION_AUDIT_ENABLED),

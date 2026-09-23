@@ -83,6 +83,15 @@ class Settings(BaseSettings):
     # Upper bound on steps in a generated plan.
     JARVIS_AGENT_MAX_PLAN_STEPS: int = Field(default=8, ge=1)
 
+    # --- Personal memory (local PostgreSQL; explicit user statements only) ---
+    JARVIS_MEMORY_ENABLED: bool = True
+    # Most relevant memories added to a request.
+    JARVIS_MEMORY_MAX_RETRIEVAL: int = Field(default=5, ge=1, le=20)
+    # false = every candidate waits for confirmation instead of being saved.
+    JARVIS_MEMORY_AUTO_SAVE: bool = True
+    # Candidates below this confidence are never auto-saved.
+    JARVIS_MEMORY_MIN_CONFIDENCE: Literal["low", "medium", "high"] = "medium"
+
     # --- Permissions & security audit ---
     # How long a permission request stays valid. Unknown tools are always denied;
     # that is an invariant, not a setting.

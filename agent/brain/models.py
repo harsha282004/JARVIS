@@ -32,6 +32,8 @@ class AgentRequest(BaseModel):
     user_text: str = Field(min_length=1)
     context: list[Message] = Field(default_factory=list)
     tools: list[ToolDescriptor] = Field(default_factory=list)
+    # Delimited, sanitized personal-memory block (agent.memory.context); untrusted data.
+    memory_context: str = ""
 
 
 class ToolSelection(BaseModel):

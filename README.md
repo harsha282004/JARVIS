@@ -3,9 +3,16 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 5 — Permission & Security
+## Current status: Phase 6 — Personal Memory
 
-Phases 0-4 are complete. Phase 5 turns the deny-by-default `PermissionManager`
+Phases 0-5 are complete. Phase 6 adds persistent personal memory: JARVIS
+extracts explicit, low-risk statements you make ("My favorite programming
+language is Java"), stores short notes in your local PostgreSQL database, and
+uses the relevant ones as context in later sessions. Secrets are never stored,
+sensitive items need confirmation, guesses are never auto-saved, and you can
+correct or delete memories through the API. It stores notes, not transcripts, and
+it is not document RAG. Run `alembic -c database/alembic.ini upgrade head` once.
+Phase 5 turns the deny-by-default `PermissionManager`
 into a real authorization layer: typed permission requests with risk levels,
 scopes (one-time/session/persistent), expiry, action binding, explicit
 approve/deny, session scoping and an in-memory audit trail. Action decisions
@@ -34,7 +41,8 @@ See `docs/architecture.md` for full scope, `docs/voice-system.md` for the
 voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/conversation-engine.md` for multi-turn conversation,
 `docs/agent-brain.md` for the agent brain,
-`docs/security-and-permissions.md` for the permission layer, and `docs/requirements.md` for what each
+`docs/security-and-permissions.md` for the permission layer,
+`docs/personal-memory.md` for personal memory, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -53,14 +61,14 @@ phase does and does not cover.
 
 ```
 backend/        FastAPI application (API, core incl. LLM + conversation engine, models, services)
-agent/          brain + planner (implemented, decision/plan only); tools, memory (interfaces only); orchestrator (empty)
+agent/          brain + planner (decision/plan only), personal memory (implemented); tools (interface only); orchestrator (empty)
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
 integrations/   External-service boundary: gmail, calendar, messaging, ... (interfaces only)
 desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) — implemented
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions docs
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory docs
 scripts/        Operational scripts (check_db.py, run_voice.py)
 ```
 
@@ -117,6 +125,9 @@ lifecycle, startup integration, troubleshooting and limitations.
   detection yet).
 - Follow-up listening is a fixed window; no interruption (barge-in) handling.
 - Conversation context is in memory only, limited by message count.
+- Memory: rule-based extraction of English statements, keyword retrieval, no
+  confirmation/correction/delete UI; PostgreSQL persistence not verified on the
+  development machine (see docs/personal-memory.md).
 - Permissions: in-process and in-memory; no approval UI, nothing approves
   requests yet, no persistence.
 - Agent brain: decisions and plans only; every action request is declined
@@ -137,7 +148,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer. Later phases — tools, the approval UI, memory/RAG,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory. Later phases — tools, the approval UI, RAG,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

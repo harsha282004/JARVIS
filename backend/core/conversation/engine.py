@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from agent.brain.brain import AgentBrain
 from agent.brain.models import AgentDecision
 from agent.brain.permissions import request_permissions
+from agent.memory.context import build_memory_block
+from agent.memory.service import MemoryService
 from backend.core.conversation.models import ConversationSession
 from backend.core.conversation.prompts import SYSTEM_PROMPT
 from backend.core.llm.base import LLMProvider
@@ -40,6 +42,7 @@ class ConversationEngine:
         clock: Callable[[], datetime] = _utcnow,
         agent: AgentBrain | None = None,
         permissions: PermissionManager | None = None,
+        memory: MemoryService | None = None,
     ):
         if max_messages < MIN_MAX_MESSAGES:
             raise ValueError(f"max_messages must be at least {MIN_MAX_MESSAGES}")
@@ -50,6 +53,7 @@ class ConversationEngine:
         self._clock = clock
         self._agent = agent
         self._permissions = permissions
+        self._memory = memory
         self._session: ConversationSession | None = None
         self.last_decision: AgentDecision | None = None
         self.last_permission_requests: list[PermissionRequest] = []
@@ -82,7 +86,8 @@ class ConversationEngine:
             session = self._new_session()
         user_message = Message(Role.USER, text, self._clock())
 
-        reply = self._generate_reply(session, user_message)
+        memory_block = self._memory_block(text)
+        reply = self._generate_reply(session, user_message, memory_block)
 
         if is_new:
             self._session = session
@@ -91,6 +96,7 @@ class ConversationEngine:
         session.add(Message(Role.ASSISTANT, reply, self._clock()))
         session.messages[:] = self._window(session.messages)
         self._request_permissions(session.session_id)
+        self._remember(text)
         logger.info(
             "Conversation turn completed (session=%s, messages=%d)",
             session.session_id,
@@ -103,13 +109,37 @@ class ConversationEngine:
         if self._session is not None:
             self._end_session("reset")
 
-    def _generate_reply(self, session: ConversationSession, user_message: Message) -> str:
-        context = self._build_context(session, user_message)
+    def _memory_block(self, text: str) -> str:
+        """Relevant stored memories as a delimited block. Any memory failure means
+        no memory context (never invented memories) and the turn continues."""
+        if self._memory is None:
+            return ""
+        try:
+            return build_memory_block(self._memory.retrieve(text))
+        except Exception as exc:  # noqa: BLE001 - memory is optional; log the type only (messages may echo content)
+            logger.warning("Memory retrieval failed; continuing without memory (%s)", type(exc).__name__)
+            return ""
+
+    def _remember(self, text: str) -> None:
+        """After a completed turn, extract memories from the USER's words only.
+        Skipped when the agent fell back to a safe reply. A failure saves nothing."""
+        decision = self.last_decision
+        if self._memory is None or (decision is not None and decision.error is not None):
+            return
+        try:
+            self._memory.process_utterance(text)
+        except Exception as exc:  # noqa: BLE001 - the completed conversation must survive a memory failure
+            logger.warning("Memory extraction/storage failed; nothing saved (%s)", type(exc).__name__)
+
+    def _generate_reply(
+        self, session: ConversationSession, user_message: Message, memory_block: str = ""
+    ) -> str:
+        context = self._build_context(session, user_message, memory_block)
         if self._agent is None:
             return self._llm.chat(context)
         # context = [system prompt, *history, current user message]; the brain
         # has its own prompt, so it gets the history and the message separately.
-        request = self._agent.build_request(user_message.content, context[1:-1])
+        request = self._agent.build_request(user_message.content, context[1:-1], memory_block)
         decision = self._agent.decide(request)
         self.last_decision = decision
         return decision.response
@@ -127,9 +157,10 @@ class ConversationEngine:
             logger.exception("Could not record permission requests; nothing was authorized")
 
     def _build_context(
-        self, session: ConversationSession, user_message: Message
+        self, session: ConversationSession, user_message: Message, memory_block: str = ""
     ) -> Sequence[Message]:
-        system = Message(Role.SYSTEM, self._system_prompt, self._clock())
+        prompt = f"{self._system_prompt}\n\n{memory_block}" if memory_block and self._agent is None else self._system_prompt
+        system = Message(Role.SYSTEM, prompt, self._clock())
         return [system, *self._window([*session.messages, user_message])]
 
     def _window(self, messages: Sequence[Message]) -> list[Message]:

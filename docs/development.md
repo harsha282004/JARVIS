@@ -53,6 +53,14 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Personal memory (Phase 6)
+
+See `docs/personal-memory.md`. Apply the schema once with
+`alembic -c database/alembic.ini upgrade head`. Memory tests use an isolated
+in-memory SQLite database; to also run them on PostgreSQL set
+`JARVIS_TEST_DATABASE_URL` to a **disposable** database (the tests create and drop
+the table). They never touch `DATABASE_URL`.
+
 ## Permissions (Phase 5)
 
 See `docs/security-and-permissions.md`. Tests (`tests/test_permission_*.py`) use

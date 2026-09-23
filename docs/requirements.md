@@ -84,6 +84,40 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 6 — Personal Memory
+
+### Functional requirements
+
+- Persistent memories (id, type FACT/PREFERENCE/GOAL/PROFILE/CONTEXT, content,
+  source, explicit-or-inferred basis, confidence, status, timestamps, metadata)
+  in PostgreSQL via the existing SQLAlchemy setup, with an Alembic migration.
+- `MemoryInterface` (store, retrieve, update, delete, search) implemented by
+  `MemoryService` over `MemoryRepository`.
+- Extraction of explicit statements from the user's words after a completed
+  turn; only the extracted note is stored, never the conversation.
+- Policy: AUTO_SAVE safe explicit statements; CONFIRM sensitive, inferred or
+  low-confidence ones; REJECT secrets. Inferred memories are LOW confidence and
+  never auto-saved or allowed to override explicit ones.
+- Deduplication, conflict handling (newer explicit statement wins, old kept as
+  superseded), explicit correction, soft delete and purge.
+- Keyword relevance retrieval; only retrieved memories update `last_accessed_at`.
+- Relevant memories reach the AgentBrain/LLM as a delimited, sanitized,
+  untrusted block appended after the rules.
+- Memory failures never break the conversation and never report false success.
+- `JARVIS_MEMORY_ENABLED`, `JARVIS_MEMORY_MAX_RETRIEVAL`,
+  `JARVIS_MEMORY_AUTO_SAVE`, `JARVIS_MEMORY_MIN_CONFIDENCE` in the existing `Settings`.
+
+### Non-functional requirements
+
+- Local only; no secrets, audio or transcripts stored; logs carry ids/types/counts only.
+- No path from LLM output to memory writes; memory cannot bypass `PermissionManager`.
+- Tests isolated from the developer's database. No new dependencies.
+
+### Explicitly out of scope for Phase 6
+
+Document RAG / vector search (Phase 7), knowledge graph, memory UI, LLM-based
+inference, and everything out of scope for earlier phases.
+
 ## Phase 5 — Permission & Security
 
 ### Functional requirements

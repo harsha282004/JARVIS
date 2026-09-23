@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 5** (permission and security) on top of **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 6** (personal memory) on top of **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -36,6 +36,17 @@ introducing a second configuration or logging system. It does **not**
 implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
+
+## Phase 6 scope (personal memory)
+
+Phase 6 implements the Phase 0 `MemoryInterface` in `agent/memory/`
+(`MemoryService` rules, `MemoryRepository` persistence, rule-based extraction,
+safety screening, confirmation policy) with a `personal_memories` table and an
+Alembic migration on the existing PostgreSQL/SQLAlchemy setup.
+`ConversationEngine` retrieves relevant memories before reasoning, adds them to
+the prompt as a delimited untrusted block, and extracts memories from the user's
+words after a completed turn. Memory never bypasses `PermissionManager`. Not RAG,
+not a knowledge graph, not transcript storage. See `docs/personal-memory.md`.
 
 ## Phase 5 scope (permission and security)
 
@@ -86,13 +97,13 @@ JARVIS/
 │   ├── core/            config, logging, database, security/ (permissions, policy, audit),
 │   │                    llm/ (provider interface, messages),
 │   │                    conversation/ (ConversationEngine)
-│   ├── models/          SQLAlchemy declarative base (no domain models yet)
+│   ├── models/          SQLAlchemy base + personal_memories table (Phase 6)
 │   └── services/        business logic layer (empty — populated by later phases)
 │
 ├── agent/               Agentic reasoning boundary
 │   ├── brain/            AgentBrain, decision models, LLM-output validation (Phase 4)
 │   ├── planner/          Plan models + deterministic Planner (Phase 4; describes, never runs)
-│   ├── memory/           MemoryInterface (no storage backend yet)
+│   ├── memory/           personal memory: interface, service, repository, extraction, safety (Phase 6)
 │   ├── tools/            Tool interface + ToolDescriptor (no concrete tools yet)
 │   └── orchestrator/     will drive plans through PermissionManager + tools (empty; not built)
 │
@@ -142,7 +153,7 @@ never calls a Tool directly.** See `docs/security.md`.
 | Backend       | Python, FastAPI, WebSockets          | FastAPI app + `/health` only; no WebSocket endpoint yet |
 | Agent         | Custom brain/planner (LangGraph/LangChain not used) | AgentBrain + Planner implemented (Phase 4, decisions only); no tools, no execution |
 | LLM           | Ollama/local first, provider abstraction | `LLMProvider` (chat, json_mode hint) + `OllamaProvider` implemented |
-| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic env configured; no schema |
+| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; one table (`personal_memories`, Phase 6) |
 | Vector storage| pgvector or similar                  | Not set up yet — deferred until memory/RAG phase |
 | Embeddings    | SentenceTransformers                 | Not added yet |
 | Voice         | wake-word engine, Whisper/Faster-Whisper, TTS | Implemented: openWakeWord, Faster-Whisper, Piper (see docs/voice-system.md) |
@@ -175,6 +186,12 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 6 intentionally does not implement
+
+Document RAG/vector search, a knowledge graph, LLM-based inference of memories,
+a memory UI or voice commands for managing memory, and everything in the Phase 5
+list below.
 
 ## What Phase 5 intentionally does not implement
 

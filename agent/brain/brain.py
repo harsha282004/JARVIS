@@ -46,10 +46,14 @@ class AgentBrain:
         self._tools = list(tools)
         self._planner = Planner(max_plan_steps)
 
-    def build_request(self, user_text: str, context: Sequence[Message]) -> AgentRequest:
+    def build_request(
+        self, user_text: str, context: Sequence[Message], memory_context: str = ""
+    ) -> AgentRequest:
         """Wrap a user message and the conversation context supplied by
         ConversationEngine, attaching the tool descriptions this brain knows."""
-        return AgentRequest(user_text=user_text, context=list(context), tools=self._tools)
+        return AgentRequest(
+            user_text=user_text, context=list(context), tools=self._tools, memory_context=memory_context
+        )
 
     def decide(self, request: AgentRequest) -> AgentDecision:
         """Return a structured decision. Raises LLMProviderError if the LLM is
@@ -57,7 +61,7 @@ class AgentBrain:
         here and yields a safe fallback decision with `error` set."""
         logger.info("Agent request received (context_messages=%d)", len(request.context))
         messages = [
-            Message(Role.SYSTEM, build_system_prompt(request.tools)),
+            Message(Role.SYSTEM, build_system_prompt(request.tools, request.memory_context)),
             *request.context,
             Message(Role.USER, request.user_text),
         ]

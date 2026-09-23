@@ -37,8 +37,10 @@ def _describe_tools(tools: Sequence[ToolDescriptor]) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(tools: Sequence[ToolDescriptor]) -> str:
-    return f"{SYSTEM_PROMPT}\n\n{_DECISION_INSTRUCTIONS}\nAVAILABLE TOOLS:\n{_describe_tools(tools)}"
+def build_system_prompt(tools: Sequence[ToolDescriptor], memory_context: str = "") -> str:
+    prompt = f"{SYSTEM_PROMPT}\n\n{_DECISION_INSTRUCTIONS}\nAVAILABLE TOOLS:\n{_describe_tools(tools)}"
+    # Memory goes last, inside its own delimiters, after every rule it must not override.
+    return f"{prompt}\n\n{memory_context}" if memory_context else prompt
 
 
 RETRY_PROMPT = (

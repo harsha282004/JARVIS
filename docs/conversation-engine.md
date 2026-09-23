@@ -129,7 +129,7 @@ used `/api/generate`) and needs a chat-capable model.
 The system prompt (`backend/core/conversation/prompts.py`) gives JARVIS its
 identity, keeps replies short for speech, tells it to use earlier turns for
 follow-ups, and, as in Phase 1, tells it to say plainly that it has no access
-to email, calendar, messages, files, tasks or personal memory. This is a
+to email, calendar, messages, files or tasks, and only knows the personal-memory notes it is given (Phase 6). This is a
 prompt-level safeguard, not a guarantee.
 
 ## Configuration

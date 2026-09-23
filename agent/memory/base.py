@@ -1,23 +1,48 @@
 """Memory abstraction.
 
-Defines the contract for storing and retrieving agent memory (short-term
-conversation state, long-term personal memory, RAG retrieval, ...).
-No concrete memory backend or storage logic is implemented in Phase 0.
+The contract for a long-term personal memory store. Phase 0 defined this as
+a generic `store(key, value)` / `retrieve(query)` placeholder; Phase 6 makes
+the operations structured (type, source, confidence) and adds update, delete
+and search. Nothing here depends on PostgreSQL: see service.py (rules) and
+repository.py (persistence) behind it.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from collections.abc import Sequence
+
+from agent.memory.models import Memory, MemoryCandidate, MemoryStatus, MemoryType, StoreResult
 
 
 class MemoryInterface(ABC):
     """Base interface for a memory store the agent can read/write."""
 
     @abstractmethod
-    def store(self, key: str, value: Any) -> None:
-        """Persist a memory item. Not implemented in Phase 0."""
+    def store(self, candidate: MemoryCandidate) -> StoreResult:
+        """Persist a memory candidate (deduplicating and resolving conflicts)."""
         raise NotImplementedError
 
     @abstractmethod
-    def retrieve(self, query: str) -> list[Any]:
-        """Retrieve memory items relevant to a query. Not implemented in Phase 0."""
+    def retrieve(self, query: str, limit: int | None = None) -> list[Memory]:
+        """Return the active memories relevant to `query`, and record that they were used."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def update(self, memory_id: str, content: str) -> Memory:
+        """Change the content of an existing memory."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete(self, memory_id: str) -> bool:
+        """Deactivate (soft-delete) a memory. Returns False if it does not exist."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def search(
+        self,
+        text: str | None = None,
+        types: Sequence[MemoryType] | None = None,
+        statuses: Sequence[MemoryStatus] | None = None,
+        limit: int = 20,
+    ) -> list[Memory]:
+        """Look memories up without marking them as used."""
         raise NotImplementedError

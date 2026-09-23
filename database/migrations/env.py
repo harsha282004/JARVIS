@@ -15,10 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.core.config import get_settings  # noqa: E402
 from backend.models.base import Base  # noqa: E402
+import backend.models.memory  # noqa: E402,F401  (registers the table)
 
 config = context.config
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# `alembic -x url=<sqlalchemy-url> ...` overrides DATABASE_URL (used to test migrations on a scratch DB).
+_url = context.get_x_argument(as_dictionary=True).get("url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", _url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

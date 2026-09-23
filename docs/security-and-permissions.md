@@ -166,6 +166,14 @@ Everything stays local and in memory. Nothing is sent anywhere, action contents
 are not stored (only the digest), and the LLM is not shown risk levels, scopes
 or any security state.
 
+## Personal memory and this boundary (Phase 6)
+
+Stored memory is untrusted data appended to the prompt inside a delimited block
+(`docs/personal-memory.md`). It cannot approve a request, select or run a tool, or
+change policy, and memory writes only happen from code on the user's own words, never
+from model output. Ordinary memory reads/writes are internal operations and are not
+permission-gated.
+
 ## Configuration
 
 | Setting | Default |

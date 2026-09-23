@@ -34,6 +34,11 @@ If PostgreSQL is not running, the application will not pretend the
 connection succeeded — `check_database_connection()` returns `False` and
 logs the underlying error.
 
+## Tables
+
+- `personal_memories` (Phase 6): extracted personal memory notes. Migration
+  `0001_personal_memories`. Apply with `alembic -c database/alembic.ini upgrade head`.
+
 ## Migrations
 
 Once real models exist, generate and apply migrations with:
