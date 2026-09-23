@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     TTS_MODEL_PATH: str = ""
     TTS_VOICE: str = "en_US-lessac-medium"
 
+    # --- Conversation (in-memory only) ---
+    # Inactivity after which the current conversation session ends.
+    JARVIS_CONVERSATION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0)
+    # Most recent user/assistant messages kept as context (minimum 2).
+    JARVIS_MAX_CONVERSATION_MESSAGES: int = Field(default=20, ge=2)
+
     # --- Windows runtime ---
     # Master switch: when false, `python -m desktop.launcher` exits immediately.
     # Lets a startup-launched JARVIS be disabled without removing the shortcut.

@@ -194,4 +194,5 @@ out/in; a spoken "Hey JARVIS" round trip through the runtime.
 - Startup shortcut is tied to the interpreter/project location.
 - No installer, no Windows service (user-session app by design: it needs the
   user's microphone and audio devices).
-- Phase 1 limits still apply (single turn, fixed listening window).
+- Phase 1 limits still apply (fixed listening window). Restarting the runtime
+  discards the in-memory conversation (pause/resume keeps it).

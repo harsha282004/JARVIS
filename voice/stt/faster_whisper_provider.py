@@ -40,8 +40,10 @@ class FasterWhisperProvider(STTProvider):
         if audio.dtype == np.int16:
             audio = audio.astype(np.float32) / 32768.0
 
+        # vad_filter: silence must transcribe to "" (not hallucinated text),
+        # since a silent follow-up window is how a conversation ends.
         segments, _info = self._model.transcribe(
-            audio, language=self._language, beam_size=1
+            audio, language=self._language, beam_size=1, vad_filter=True
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
         return text

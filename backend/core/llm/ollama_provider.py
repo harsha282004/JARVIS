@@ -1,14 +1,17 @@
 """Ollama-backed LLMProvider implementation.
 
-Talks to a local Ollama server over its REST API (`/api/generate`). Requires
-Ollama to be installed, running, and have the configured model pulled —
-this module never fabricates a response if the server is unreachable or
+Talks to a local Ollama server over its REST API (`/api/chat`). Requires
+Ollama to be installed, running, and have the configured model pulled.
+This module never fabricates a response if the server is unreachable or
 the model is missing.
 """
+
+from collections.abc import Sequence
 
 import httpx
 
 from backend.core.llm.base import LLMProvider, LLMProviderError
+from backend.core.llm.messages import Message
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -22,18 +25,16 @@ class OllamaProvider(LLMProvider):
         self._model = model
         self._timeout = timeout
 
-    def generate(self, prompt: str, system: str | None = None, **kwargs) -> str:
+    def chat(self, messages: Sequence[Message]) -> str:
         payload = {
             "model": self._model,
-            "prompt": prompt,
+            "messages": [{"role": m.role.value, "content": m.content} for m in messages],
             "stream": False,
         }
-        if system:
-            payload["system"] = system
 
         try:
             response = httpx.post(
-                f"{self._base_url}/api/generate",
+                f"{self._base_url}/api/chat",
                 json=payload,
                 timeout=self._timeout,
             )
@@ -47,8 +48,7 @@ class OllamaProvider(LLMProvider):
                 f"Could not reach Ollama at {self._base_url}. Is it running? ({exc})"
             ) from exc
 
-        data = response.json()
-        text = data.get("response", "").strip()
+        text = response.json().get("message", {}).get("content", "").strip()
         if not text:
             raise LLMProviderError(
                 f"Ollama returned an empty response for model '{self._model}'"

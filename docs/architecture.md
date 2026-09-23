@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 2** (Windows runtime) on top of **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 3** (conversation engine) on top of **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -37,6 +37,15 @@ implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
 
+## Phase 3 scope (conversation engine)
+
+Phase 3 adds `backend/core/conversation/` (`ConversationEngine`, session and
+message models, system prompt) and a chat-style `LLMProvider.chat(messages)`.
+The boundary is `Windows runtime -> VoiceEngine -> ConversationEngine ->
+LLMProvider -> OllamaProvider`: VoiceEngine owns audio, ConversationEngine
+owns in-memory session/history/context/timeout/reset. No persistence, agent,
+memory or tools. See `docs/conversation-engine.md`.
+
 ## Phase 2 scope (Windows runtime)
 
 Phase 2 adds `desktop/`: a `RuntimeManager` that owns the VoiceEngine
@@ -53,7 +62,8 @@ providers`; the runtime holds no reasoning, memory or integration logic. See
 JARVIS/
 ├── backend/            FastAPI application: API, core, models, services
 │   ├── api/             HTTP route definitions (thin — no business logic)
-│   ├── core/            config, logging, database, security, LLM interface
+│   ├── core/            config, logging, database, security, llm/ (provider interface, messages),
+│   │                    conversation/ (ConversationEngine)
 │   ├── models/          SQLAlchemy declarative base (no domain models yet)
 │   └── services/        business logic layer (empty — populated by later phases)
 │
@@ -143,6 +153,12 @@ intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
 
+## What Phase 3 intentionally does not implement
+
+Persistent memory or conversation storage, agent/planner/tools, and
+everything in the Phase 2 and Phase 1 lists below. Conversation state is
+in memory only.
+
 ## What Phase 2 intentionally does not implement
 
 Installer/packaging, a Windows service, IPC/remote control of the runtime,
@@ -150,7 +166,7 @@ and everything in the Phase 1 list below. The runtime is lifecycle only.
 
 ## What Phase 1 intentionally does not implement
 
-Multi-turn conversation, conversation history/session state, memory of any
-kind, LangGraph/planner/tool execution, and every integration/desktop/
+Memory of any
+kind (conversation history is in-memory only, added in Phase 3), LangGraph/planner/tool execution, and every integration/desktop/
 frontend item listed above. See `docs/voice-system.md` for the full Phase 1
 non-goal list.

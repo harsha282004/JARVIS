@@ -49,7 +49,8 @@ frontend, and production deployment.
   playing it through the speakers.
 - `VoiceEngine` (`voice/engine.py`) driving one wake-word -> response
   cycle through a `WAITING -> LISTENING -> TRANSCRIBING -> THINKING ->
-  SPEAKING -> WAITING` state machine, with no persisted conversation state.
+  SPEAKING -> WAITING` state machine (repeating per turn since Phase 3), with no
+  persisted conversation state.
 - All new configuration added to the existing Phase 0 `Settings` class —
   no second configuration system.
 - The LLM must never claim access to email, calendar, messages, files,
@@ -82,6 +83,38 @@ messaging, YouTube, Spotify, browser/desktop automation), tasks/reminders,
 proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
+
+## Phase 3 — Conversation Engine
+
+### Functional requirements
+
+- In-memory `ConversationSession` (UUID id, created_at, last_activity,
+  messages, active/ended state) and a typed `Message` model
+  (system/user/assistant with timestamp).
+- Multi-turn context: each LLM request is system prompt + recent history +
+  current user message, built by `ConversationEngine`, so follow-ups work.
+- Bounded history via `JARVIS_MAX_CONVERSATION_MESSAGES`; the current user
+  message and latest reply are never dropped.
+- Inactivity timeout (`JARVIS_CONVERSATION_TIMEOUT_SECONDS`) ends the session;
+  `reset()` ends it on demand.
+- `LLMProvider.chat(messages)` shared interface; `OllamaProvider` adapts it;
+  `generate()` remains as a single-turn wrapper.
+- VoiceEngine holds a spoken multi-turn flow (follow-ups without the wake
+  word until silence) without changing its voice state machine.
+- An LLM failure adds nothing to history and leaves the session usable.
+
+### Non-functional requirements
+
+- Conversation state in memory only: never written to disk/PostgreSQL/logs,
+  never sent to external services; logs carry ids, counts and lengths only.
+- ConversationEngine has no audio code; VoiceEngine has no history code.
+- No new dependencies; no second configuration system.
+
+### Explicitly out of scope for Phase 3
+
+Persistent memory, RAG, agent/planner/tools, integrations, barge-in,
+token-exact context budgeting, and everything listed as out of scope for
+Phases 1 and 2.
 
 ## Phase 2 — Windows Runtime
 

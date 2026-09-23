@@ -6,6 +6,7 @@ today only one concrete implementation exists per interface.
 """
 
 from backend.core.config import Settings
+from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.ollama_provider import OllamaProvider
 from voice.audio import AudioInput, AudioOutput
@@ -68,7 +69,11 @@ def build_voice_engine(settings: Settings) -> VoiceEngine:
     return VoiceEngine(
         wakeword=_build_wakeword(settings),
         stt=_build_stt(settings),
-        llm=_build_llm(settings),
+        conversation=ConversationEngine(
+            llm=_build_llm(settings),
+            max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
+            timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
+        ),
         tts=_build_tts(settings),
         audio_input=AudioInput(
             sample_rate=settings.AUDIO_SAMPLE_RATE, device=settings.MICROPHONE_DEVICE

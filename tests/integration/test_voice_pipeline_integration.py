@@ -67,3 +67,26 @@ def test_piper_model_loads_if_configured():
     audio, sample_rate = provider.synthesize("Yes?")
     assert len(audio) > 0
     assert sample_rate > 0
+
+
+@pytest.mark.integration
+def test_real_ollama_multi_turn_conversation_in_one_session():
+    settings = get_settings()
+    if not _ollama_reachable(settings.OLLAMA_BASE_URL):
+        pytest.skip(f"Ollama not reachable at {settings.OLLAMA_BASE_URL}")
+
+    from backend.core.conversation.engine import ConversationEngine
+    from backend.core.llm.ollama_provider import OllamaProvider
+
+    engine = ConversationEngine(
+        OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model=settings.LLM_MODEL),
+        max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
+        timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
+    )
+    first = engine.respond("What is Python?")
+    session_id = engine.session.session_id
+    second = engine.respond("Who created it?")
+
+    assert first.strip() and second.strip()
+    assert engine.session.session_id == session_id
+    assert len(engine.session.messages) == 4

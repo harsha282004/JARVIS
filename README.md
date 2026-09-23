@@ -3,20 +3,24 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 2 — Windows Runtime
+## Current status: Phase 3 — Conversation Engine
 
-Phase 0 (foundation) and Phase 1 (voice engine) are complete. Phase 2 runs
+Phases 0-2 are complete. Phase 3 makes JARVIS multi-turn: follow-up
+questions ("Who created it?") are answered using the earlier turns of the
+same in-memory conversation session, which ends after an inactivity timeout.
+Phase 2 runs
 the voice engine as a persistent Windows background app with a system-tray
 icon (status, pause/resume, restart, exit), graceful shutdown, sleep/resume
 recovery, and optional start-with-Windows. Phase 1 provides a functional local
 voice pipeline: say "Hey JARVIS", ask a question, get a spoken answer from
 a local LLM via Ollama. **No agent reasoning/tools, memory, personal RAG,
 integrations (Gmail, Calendar, messaging, ...), installer/packaging, or
-frontend functionality is implemented yet**, and there is no multi-turn
-conversation — each activation is a single, independent exchange.
+frontend functionality is implemented yet**, and there is no
+persistent memory; conversation history is in memory only and is lost on exit.
 
 See `docs/architecture.md` for full scope, `docs/voice-system.md` for the
-voice pipeline, `docs/windows-runtime.md` for the Windows runtime, and `docs/requirements.md` for what each
+voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
+`docs/conversation-engine.md` for multi-turn conversation, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -34,7 +38,7 @@ phase does and does not cover.
 ## Architecture overview
 
 ```
-backend/        FastAPI application (API, core, models, services)
+backend/        FastAPI application (API, core incl. LLM + conversation engine, models, services)
 agent/          Agent boundary: planner, memory, tools, orchestrator (interfaces only)
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
 integrations/   External-service boundary: gmail, calendar, messaging, ... (interfaces only)
@@ -42,7 +46,7 @@ desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) �
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system, windows-runtime docs
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine docs
 scripts/        Operational scripts (check_db.py, run_voice.py)
 ```
 
@@ -97,7 +101,8 @@ lifecycle, startup integration, troubleshooting and limitations.
 
 - Fixed-duration listening window after "Hey JARVIS" (no end-of-speech
   detection yet).
-- No multi-turn conversation, context, or interruption handling.
+- Follow-up listening is a fixed window; no interruption (barge-in) handling.
+- Conversation context is in memory only, limited by message count.
 - Runtime: no installer or Windows service; no external control besides the
   tray/Ctrl+C; sleep is detected after the fact (see the runtime doc).
 - JARVIS has no memory, Gmail, Calendar, messaging, or RAG — it will say
@@ -113,9 +118,9 @@ permission boundary before reaching a tool or external system:
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime. Later phases — agent execution/tools, memory/RAG,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation. Later phases — agent execution/tools, memory/RAG,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any
 capability beyond `GET /health`, database connectivity checking, and the
-single-turn voice pipeline (run as a tray app) described above currently works.
+multi-turn voice pipeline (run as a tray app) described above currently works.

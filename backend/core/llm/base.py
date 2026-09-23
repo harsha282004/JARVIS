@@ -1,25 +1,34 @@
 """LLM provider abstraction.
 
 Defines the contract LLM backends implement (see ollama_provider.py for the
-Phase 1 concrete implementation) so the rest of the system never depends on
-a specific LLM backend.
+concrete implementation) so the rest of the system never depends on a
+specific LLM backend.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
+
+from backend.core.llm.messages import Message, Role
 
 
 class LLMProviderError(Exception):
-    """Raised when an LLM provider cannot fulfill a generate() request."""
+    """Raised when an LLM provider cannot fulfill a request."""
 
 
 class LLMProvider(ABC):
     """Base interface for a chat-completion capable LLM backend."""
 
     @abstractmethod
-    def generate(self, prompt: str, system: str | None = None, **kwargs) -> str:
-        """Return a completion for the given prompt.
+    def chat(self, messages: Sequence[Message]) -> str:
+        """Return the assistant reply to an ordered message list.
 
-        Raises LLMProviderError if the backend is unreachable or errors —
-        never fabricates a response.
+        Raises LLMProviderError if the backend is unreachable or errors,
+        and never fabricates a response.
         """
         raise NotImplementedError
+
+    def generate(self, prompt: str, system: str | None = None) -> str:
+        """Single-turn convenience wrapper around `chat`."""
+        messages = [Message(Role.SYSTEM, system)] if system else []
+        messages.append(Message(Role.USER, prompt))
+        return self.chat(messages)

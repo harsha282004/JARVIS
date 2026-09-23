@@ -27,9 +27,11 @@ time through a small state machine:
 WAITING -> LISTENING -> TRANSCRIBING -> THINKING -> SPEAKING -> WAITING
 ```
 
-There is no persisted conversation state between cycles — each activation
-is independent. Multi-turn conversation, context, and interruption
-handling are explicitly deferred to a later phase.
+Since Phase 3, one activation can hold several turns: after answering, the
+engine listens again without the wake word until you stay silent, and
+conversation context is kept in memory by `ConversationEngine` (see
+`docs/conversation-engine.md`). Interruption handling is still not
+implemented.
 
 ## Why these technologies
 
@@ -65,7 +67,8 @@ voice/
 
 `backend/core/llm/ollama_provider.py` adds `OllamaProvider`, the first
 concrete implementation of Phase 0's `LLMProvider` interface, talking to a
-local Ollama server's `/api/generate` REST endpoint over `httpx`.
+local Ollama server's `/api/chat` REST endpoint over `httpx` (it used
+`/api/generate` in Phase 1).
 
 Swapping any provider (e.g. a different wake-word engine) means adding a
 new class implementing the relevant `base.py` interface and a branch in
@@ -214,7 +217,7 @@ Say "Hey JARVIS", wait for "Yes?", then ask a question. Ctrl+C to stop.
 ## Personal-information safety
 
 JARVIS has no memory, Gmail, Calendar, messaging, or personal RAG yet. The
-LLM's system prompt (`voice.engine.SYSTEM_PROMPT`) explicitly instructs it
+LLM's system prompt (`backend.core.conversation.prompts.SYSTEM_PROMPT`) explicitly instructs it
 not to claim access to any of those and to say plainly that a capability
 isn't available yet if asked (e.g. "what's my next meeting?"). This is a
 prompt-level safeguard, not a hard guarantee against LLM confabulation —
@@ -290,8 +293,8 @@ This implementation was built and tested on the target machine, with real
 
 - Fixed-duration listening window (`AUDIO_LISTEN_SECONDS`) instead of
   proper end-of-speech / voice-activity detection — you have exactly that
-  many seconds to speak after "Yes?". Phase 3 will address this.
-- No multi-turn conversation or context — every activation is independent.
+  many seconds to speak after "Yes?". Not addressed in Phase 3.
+- Multi-turn context is in memory only (Phase 3); see `docs/conversation-engine.md`.
 - No interruption handling (can't stop JARVIS mid-sentence).
 - Wake-word/STT/TTS model quality depends entirely on the chosen model
   size vs. available CPU/GPU.

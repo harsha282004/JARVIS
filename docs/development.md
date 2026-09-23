@@ -53,6 +53,12 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Conversation engine (Phase 3)
+
+See `docs/conversation-engine.md`. Tests (`tests/test_conversation_engine.py`)
+use a fake LLM and fake clock and need no Ollama; `tests/integration` has a
+real-Ollama two-turn test that skips when Ollama is not running.
+
 ## Windows runtime (Phase 2)
 
 ```powershell
