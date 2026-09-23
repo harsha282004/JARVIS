@@ -10,6 +10,7 @@ from backend.core.config import Settings
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.ollama_provider import OllamaProvider
+from backend.core.security import AuditLog, PermissionManager
 from voice.audio import AudioInput, AudioOutput
 from voice.engine import VoiceEngine
 from voice.exceptions import ProviderNotConfiguredError
@@ -67,6 +68,11 @@ def _build_conversation(settings: Settings) -> ConversationEngine:
         max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
         timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
         agent=agent,
+        permissions=PermissionManager(
+            tools=[],  # no tools exist yet, so every requested tool is denied as unknown
+            audit=AuditLog(enabled=settings.JARVIS_PERMISSION_AUDIT_ENABLED),
+            default_expiry_seconds=settings.JARVIS_PERMISSION_DEFAULT_EXPIRY_SECONDS,
+        ),
     )
 
 

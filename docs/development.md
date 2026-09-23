@@ -53,6 +53,13 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Permissions (Phase 5)
+
+See `docs/security-and-permissions.md`. Tests (`tests/test_permission_*.py`) use
+fake tools and a fake clock; nothing external is touched. To exercise the API:
+`PermissionManager(tools=[tool.descriptor().security_info()])`, then
+`request_permission(...)`, `approve(request)`, `check(...)`.
+
 ## Agent brain (Phase 4)
 
 See `docs/agent-brain.md`. Tests (`tests/test_agent_*.py`,

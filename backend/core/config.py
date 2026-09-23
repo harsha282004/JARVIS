@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     # Upper bound on steps in a generated plan.
     JARVIS_AGENT_MAX_PLAN_STEPS: int = Field(default=8, ge=1)
 
+    # --- Permissions & security audit ---
+    # How long a permission request stays valid. Unknown tools are always denied;
+    # that is an invariant, not a setting.
+    JARVIS_PERMISSION_DEFAULT_EXPIRY_SECONDS: float = Field(default=300.0, gt=0)
+    # In-memory audit trail plus structured SECURITY_EVENT log lines.
+    JARVIS_PERMISSION_AUDIT_ENABLED: bool = True
+
     # --- Windows runtime ---
     # Master switch: when false, `python -m desktop.launcher` exits immediately.
     # Lets a startup-launched JARVIS be disabled without removing the shortcut.

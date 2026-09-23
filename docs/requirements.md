@@ -84,6 +84,39 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 5 — Permission & Security
+
+### Functional requirements
+
+- Typed `PermissionRequest` (id, tool/action, description, risk, scope,
+  session id, timestamps, expiry, status) with statuses PENDING, APPROVED,
+  DENIED, EXPIRED, CANCELLED (plus CONSUMED for used one-time approvals) and
+  risk levels LOW, MEDIUM, HIGH, CRITICAL.
+- Centralized policy: unknown tool, scope not allowed, malformed input or any
+  error means DENY; approval is explicit (`approve`/`deny`/`cancel`/`expire`)
+  and verified against the original request; only the manager produces APPROVED.
+- Approvals are bound to (tool, action, parameter digest, session) and expire;
+  ONE_TIME approvals are consumed on first use; SESSION approvals end with the
+  conversation session; PERSISTENT needs explicit confirmation.
+- `check`/`authorize`/`require` and `Tool.execute` are fail-closed gates.
+- Agent action decisions create permission requests; nothing is executed.
+- Security audit events (typed) recorded in memory and logged, without
+  sensitive content.
+- `JARVIS_PERMISSION_DEFAULT_EXPIRY_SECONDS`, `JARVIS_PERMISSION_AUDIT_ENABLED`
+  in the existing `Settings`.
+
+### Non-functional requirements
+
+- No fail-open path; no real tool or external side effect.
+- Phase 0 `PermissionManager`/`PermissionRequest` usage stays compatible.
+- Local only; parameters are never stored or logged, only a digest.
+- No new dependencies.
+
+### Explicitly out of scope for Phase 5
+
+Real tools, an approval UI/permission center (Phase 21), persistent permissions
+or audit storage, cryptographic signing, and everything out of scope earlier.
+
 ## Phase 4 — Agent Brain
 
 ### Functional requirements

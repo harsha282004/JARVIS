@@ -13,11 +13,13 @@ from datetime import datetime, timedelta, timezone
 
 from agent.brain.brain import AgentBrain
 from agent.brain.models import AgentDecision
+from agent.brain.permissions import request_permissions
 from backend.core.conversation.models import ConversationSession
 from backend.core.conversation.prompts import SYSTEM_PROMPT
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.messages import Message, Role
 from backend.core.logging import get_logger
+from backend.core.security import PermissionManager, PermissionRequest
 
 logger = get_logger(__name__)
 
@@ -37,6 +39,7 @@ class ConversationEngine:
         system_prompt: str = SYSTEM_PROMPT,
         clock: Callable[[], datetime] = _utcnow,
         agent: AgentBrain | None = None,
+        permissions: PermissionManager | None = None,
     ):
         if max_messages < MIN_MAX_MESSAGES:
             raise ValueError(f"max_messages must be at least {MIN_MAX_MESSAGES}")
@@ -46,8 +49,10 @@ class ConversationEngine:
         self._system_prompt = system_prompt
         self._clock = clock
         self._agent = agent
+        self._permissions = permissions
         self._session: ConversationSession | None = None
         self.last_decision: AgentDecision | None = None
+        self.last_permission_requests: list[PermissionRequest] = []
 
     @property
     def session(self) -> ConversationSession | None:
@@ -85,6 +90,7 @@ class ConversationEngine:
         session.add(user_message)
         session.add(Message(Role.ASSISTANT, reply, self._clock()))
         session.messages[:] = self._window(session.messages)
+        self._request_permissions(session.session_id)
         logger.info(
             "Conversation turn completed (session=%s, messages=%d)",
             session.session_id,
@@ -107,6 +113,18 @@ class ConversationEngine:
         decision = self._agent.decide(request)
         self.last_decision = decision
         return decision.response
+
+    def _request_permissions(self, session_id: str) -> None:
+        """Ask the PermissionManager about the decision's tools. Never approves
+        or runs anything; a failure here only means no request was recorded."""
+        self.last_permission_requests = []
+        decision = self.last_decision
+        if self._permissions is None or decision is None or not decision.action_required:
+            return
+        try:
+            self.last_permission_requests = request_permissions(decision, self._permissions, session_id)
+        except Exception:  # noqa: BLE001 - a security-side failure must not break the reply; nothing was authorized
+            logger.exception("Could not record permission requests; nothing was authorized")
 
     def _build_context(
         self, session: ConversationSession, user_message: Message
@@ -136,5 +154,7 @@ class ConversationEngine:
 
     def _end_session(self, reason: str) -> None:
         session, self._session = self._session, None
+        if self._permissions is not None:
+            self._permissions.end_session(session.session_id)
         logger.info("Conversation session ended (session=%s, reason=%s)", session.session_id, reason)
         session.end()

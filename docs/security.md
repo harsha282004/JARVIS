@@ -9,27 +9,36 @@ a fixed chain:
 ```
 LLM
  ↓
-PermissionManager   (backend/core/security.py)
+PermissionManager   (backend/core/security/)
  ↓
 Tool                (agent/tools/base.py)
  ↓
 External System     (integrations/, desktop/, ...)
 ```
 
-The LLM proposes an action (e.g. "send this email"). The agent's
-orchestrator translates that proposal into a `PermissionRequest` and asks
-`PermissionManager.authorize()` before any `Tool.run()` is invoked. A tool
+The LLM proposes an action (e.g. "send this email"). The agent brain turns
+that into a structured decision, the decision becomes a `PermissionRequest`
+held by the manager, and a tool runs only after the manager authorizes exactly
+that call (`Tool.execute` -> `PermissionManager.check`). A tool
 implementation must never be called directly by LLM output, and must never
 reach an external system without going through this check first.
 
+## Phase 5 update
+
+Phase 0's deny-everything placeholder has been replaced by a real permission
+layer (typed requests, risk levels, scopes, policy, approval, expiry, action
+binding, session scoping and an in-memory audit trail). It is still deny by
+default: unknown tools, unknown/expired/mismatched/malformed requests and any
+security failure are denied. See `docs/security-and-permissions.md`. The Phase 0
+description below is kept for history.
+
 ## Phase 0 implementation
 
-- `backend/core/security.py` defines `PermissionManager`, `PermissionRequest`,
-  and `PermissionDenied`.
-- The default policy is **deny by default**: `PermissionManager.authorize()`
-  currently always returns `False` and logs the denial. No fine-grained
-  rules (per-user consent, scopes, prompts, audit trail persistence) exist
-  yet — that is a later-phase concern.
+- `backend/core/security` (a module in Phase 0, now a package that still exports
+  `PermissionManager`, `PermissionRequest` and `PermissionDenied`).
+- The default policy is **deny by default**: in Phase 0 `authorize()` always
+  returned `False`. (Phase 5 keeps that for anything without an approved,
+  matching record.)
 - No `Tool` subclasses exist yet, so nothing currently calls
   `PermissionManager`. The boundary is established ahead of the tools that
   will need it.
@@ -50,8 +59,8 @@ reach an external system without going through this check first.
 
 ## What is intentionally not implemented yet
 
-- Per-user or per-tool permission rules and consent prompts.
-- Persistent audit logging of authorized/denied actions.
+- Consent prompts / a permission UI (Phase 21) and persistent audit storage.
+  (Per-tool rules, scopes and an in-memory audit trail exist since Phase 5.)
 - Credential storage/retrieval for real integrations (Gmail, Calendar,
   messaging, etc.) — only placeholder env var names exist in `.env.example`.
 - Sandboxing or process-level isolation for tool execution.

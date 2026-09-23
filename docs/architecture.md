@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 4** (agent brain) on top of **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 5** (permission and security) on top of **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -36,6 +36,17 @@ introducing a second configuration or logging system. It does **not**
 implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
+
+## Phase 5 scope (permission and security)
+
+Phase 5 replaces `backend/core/security.py` with the package
+`backend/core/security/` (typed `PermissionRequest`, `RiskLevel`,
+`PermissionScope`, `PermissionStatus`, `PermissionPolicy`, `AuditLog`,
+`PermissionManager`), adds risk/scope metadata to `ToolDescriptor`/`Tool`, a
+fail-closed `Tool.execute` gate, and `agent/brain/permissions.py`, which turns
+action decisions into permission requests (wired through `ConversationEngine`).
+Boundary: `AgentDecision -> PermissionManager -> Tool -> external system`; the
+last two steps do not exist yet. See `docs/security-and-permissions.md`.
 
 ## Phase 4 scope (agent brain)
 
@@ -72,7 +83,8 @@ providers`; the runtime holds no reasoning, memory or integration logic. See
 JARVIS/
 ├── backend/            FastAPI application: API, core, models, services
 │   ├── api/             HTTP route definitions (thin — no business logic)
-│   ├── core/            config, logging, database, security, llm/ (provider interface, messages),
+│   ├── core/            config, logging, database, security/ (permissions, policy, audit),
+│   │                    llm/ (provider interface, messages),
 │   │                    conversation/ (ConversationEngine)
 │   ├── models/          SQLAlchemy declarative base (no domain models yet)
 │   └── services/        business logic layer (empty — populated by later phases)
@@ -163,6 +175,11 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 5 intentionally does not implement
+
+Any real tool or execution, an approval UI / permission center, persistent
+permissions or audit storage, and everything in the Phase 4 list below.
 
 ## What Phase 4 intentionally does not implement
 

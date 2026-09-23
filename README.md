@@ -3,9 +3,15 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 4 — Agent Brain
+## Current status: Phase 5 — Permission & Security
 
-Phases 0-3 are complete. Phase 4 adds a reasoning layer: for each request
+Phases 0-4 are complete. Phase 5 turns the deny-by-default `PermissionManager`
+into a real authorization layer: typed permission requests with risk levels,
+scopes (one-time/session/persistent), expiry, action binding, explicit
+approve/deny, session scoping and an in-memory audit trail. Action decisions
+now create permission requests (all denied or pending today, since no tools
+exist and nothing approves them). **Nothing is executed and there are still no
+real tools.** Phase 4 adds a reasoning layer: for each request
 JARVIS classifies the intent (conversation, information, action, clarification,
 unsupported), decides whether an action would be needed, and produces a
 structured decision with a plan, selected tool names and permission needs.
@@ -27,7 +33,8 @@ persistent memory; conversation history is in memory only and is lost on exit.
 See `docs/architecture.md` for full scope, `docs/voice-system.md` for the
 voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/conversation-engine.md` for multi-turn conversation,
-`docs/agent-brain.md` for the agent brain, and `docs/requirements.md` for what each
+`docs/agent-brain.md` for the agent brain,
+`docs/security-and-permissions.md` for the permission layer, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -53,7 +60,7 @@ desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) �
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain docs
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions docs
 scripts/        Operational scripts (check_db.py, run_voice.py)
 ```
 
@@ -110,6 +117,8 @@ lifecycle, startup integration, troubleshooting and limitations.
   detection yet).
 - Follow-up listening is a fixed window; no interruption (barge-in) handling.
 - Conversation context is in memory only, limited by message count.
+- Permissions: in-process and in-memory; no approval UI, nothing approves
+  requests yet, no persistence.
 - Agent brain: decisions and plans only; every action request is declined
   because no tools exist; classification quality depends on the local model.
 - Runtime: no installer or Windows service; no external control besides the
@@ -121,13 +130,14 @@ lifecycle, startup integration, troubleshooting and limitations.
 
 The LLM never has unrestricted OS access. Every action flows through a
 permission boundary before reaching a tool or external system:
-`LLM -> PermissionManager -> Tool -> External System`. Details in
-[`docs/security.md`](docs/security.md).
+`LLM -> AgentBrain -> AgentDecision -> PermissionManager -> Tool -> External System`.
+Details in [`docs/security.md`](docs/security.md) and
+[`docs/security-and-permissions.md`](docs/security-and-permissions.md).
 
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain. Later phases — tool execution and permissions, memory/RAG,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer. Later phases — tools, the approval UI, memory/RAG,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

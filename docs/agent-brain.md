@@ -109,8 +109,10 @@ LLM -> (text) -> parse/validate -> AgentDecision (data) -> [future] PermissionMa
   `socket`, `httpx`, `requests`, `.run(` ...).
 - Tool names from the model are inert strings; hostile names are just
   reported as missing tools.
-- The Phase 0 `PermissionManager` is unchanged and not bypassed; the brain
-  does not call it because it executes nothing.
+- The brain does not call the `PermissionManager` because it executes nothing.
+  Since Phase 5 the manager is a full authorization layer and `ConversationEngine`
+  turns action decisions into permission requests through it (see
+  `docs/security-and-permissions.md`); the brain itself still has no reference to it.
 
 ## Structured output and errors
 
