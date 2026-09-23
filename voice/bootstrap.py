@@ -5,6 +5,7 @@ implementation later is a config change, not a code change at call sites —
 today only one concrete implementation exists per interface.
 """
 
+from agent.brain.brain import AgentBrain
 from backend.core.config import Settings
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProvider
@@ -53,6 +54,22 @@ def _build_tts(settings: Settings) -> TTSProvider:
     raise ProviderNotConfiguredError(f"Unknown TTS_PROVIDER '{settings.TTS_PROVIDER}'")
 
 
+def _build_conversation(settings: Settings) -> ConversationEngine:
+    llm = _build_llm(settings)
+    # No tools exist yet, so the brain is given an empty tool catalog.
+    agent = (
+        AgentBrain(llm, tools=[], max_plan_steps=settings.JARVIS_AGENT_MAX_PLAN_STEPS)
+        if settings.JARVIS_AGENT_ENABLED
+        else None
+    )
+    return ConversationEngine(
+        llm=llm,
+        max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
+        timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
+        agent=agent,
+    )
+
+
 def build_voice_engine(settings: Settings) -> VoiceEngine:
     """Construct a VoiceEngine wired to the providers named in `settings`.
 
@@ -69,11 +86,7 @@ def build_voice_engine(settings: Settings) -> VoiceEngine:
     return VoiceEngine(
         wakeword=_build_wakeword(settings),
         stt=_build_stt(settings),
-        conversation=ConversationEngine(
-            llm=_build_llm(settings),
-            max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
-            timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
-        ),
+        conversation=_build_conversation(settings),
         tts=_build_tts(settings),
         audio_input=AudioInput(
             sample_rate=settings.AUDIO_SAMPLE_RATE, device=settings.MICROPHONE_DEVICE

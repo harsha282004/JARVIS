@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # Most recent user/assistant messages kept as context (minimum 2).
     JARVIS_MAX_CONVERSATION_MESSAGES: int = Field(default=20, ge=2)
 
+    # --- Agent brain (reasoning/planning only; executes nothing) ---
+    JARVIS_AGENT_ENABLED: bool = True
+    # Upper bound on steps in a generated plan.
+    JARVIS_AGENT_MAX_PLAN_STEPS: int = Field(default=8, ge=1)
+
     # --- Windows runtime ---
     # Master switch: when false, `python -m desktop.launcher` exits immediately.
     # Lets a startup-launched JARVIS be disabled without removing the shortcut.

@@ -19,8 +19,11 @@ class LLMProvider(ABC):
     """Base interface for a chat-completion capable LLM backend."""
 
     @abstractmethod
-    def chat(self, messages: Sequence[Message]) -> str:
+    def chat(self, messages: Sequence[Message], json_mode: bool = False) -> str:
         """Return the assistant reply to an ordered message list.
+
+        `json_mode` asks the backend to constrain its output to JSON where it
+        can. It is a hint: callers must still validate what they receive.
 
         Raises LLMProviderError if the backend is unreachable or errors,
         and never fabricates a response.

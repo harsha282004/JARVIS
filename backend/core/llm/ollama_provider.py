@@ -25,12 +25,14 @@ class OllamaProvider(LLMProvider):
         self._model = model
         self._timeout = timeout
 
-    def chat(self, messages: Sequence[Message]) -> str:
+    def chat(self, messages: Sequence[Message], json_mode: bool = False) -> str:
         payload = {
             "model": self._model,
             "messages": [{"role": m.role.value, "content": m.content} for m in messages],
             "stream": False,
         }
+        if json_mode:
+            payload["format"] = "json"
 
         try:
             response = httpx.post(

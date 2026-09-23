@@ -84,6 +84,40 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 4 — Agent Brain
+
+### Functional requirements
+
+- `AgentBrain` turns a request (user text, conversation context supplied by
+  ConversationEngine, tool descriptors) into a validated `AgentDecision`:
+  intent (conversation, information_request, action_request,
+  clarification_required, unsupported_request), action_required, plan, response,
+  selected tools, requires_permission, confidence, short reasoning summary.
+- Action requests get a deterministic `Plan` (prepare / permission / execute
+  steps) capped by `JARVIS_AGENT_MAX_PLAN_STEPS`; the plan is never executed.
+- Tools are selected by name from `ToolDescriptor`s; unknown tools are recorded
+  as missing; permission is assumed required unless known otherwise.
+- LLM output is parsed as data and validated; invalid output is retried once,
+  then handled by a safe fallback with a structured error. An unavailable LLM
+  raises instead of fabricating a reply.
+- Replies to action/unsupported requests never claim the action happened.
+- `JARVIS_AGENT_ENABLED` and `JARVIS_AGENT_MAX_PLAN_STEPS` in the existing
+  `Settings`.
+
+### Non-functional requirements
+
+- No execution path from the LLM to the OS or any external system; the brain
+  holds descriptors, not tools, and the existing `PermissionManager` is untouched.
+- ConversationEngine remains the only owner of history.
+- Logs exclude user text, tool arguments, and model output; no chain-of-thought.
+- No new dependencies.
+
+### Explicitly out of scope for Phase 4
+
+Any concrete tool or tool execution, the permission workflow/UI (Phase 5),
+memory, RAG, integrations, autonomous execution, and everything out of scope
+for earlier phases.
+
 ## Phase 3 — Conversation Engine
 
 ### Functional requirements

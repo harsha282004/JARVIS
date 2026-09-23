@@ -65,6 +65,21 @@ def test_chat_sends_full_message_list_and_returns_reply(monkeypatch):
     ]
 
 
+def test_json_mode_sets_ollama_format_and_default_does_not(monkeypatch):
+    seen = []
+
+    def fake_post(url, json, timeout):
+        seen.append(json)
+        return _FakeResponse({"message": {"content": "{}"}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    _provider().chat([Message(Role.USER, "x")], json_mode=True)
+    _provider().chat([Message(Role.USER, "x")])
+    assert seen[0]["format"] == "json"
+    assert "format" not in seen[1]
+
+
 def test_generate_wraps_prompt_as_system_plus_user(monkeypatch):
     captured = {}
 

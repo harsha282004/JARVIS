@@ -90,3 +90,26 @@ def test_real_ollama_multi_turn_conversation_in_one_session():
     assert first.strip() and second.strip()
     assert engine.session.session_id == session_id
     assert len(engine.session.messages) == 4
+
+
+@pytest.mark.integration
+def test_real_ollama_agent_brain_classifies_info_and_action_requests():
+    settings = get_settings()
+    if not _ollama_reachable(settings.OLLAMA_BASE_URL):
+        pytest.skip(f"Ollama not reachable at {settings.OLLAMA_BASE_URL}")
+
+    from agent.brain.brain import AgentBrain
+    from agent.brain.models import Intent
+    from backend.core.llm.ollama_provider import OllamaProvider
+
+    llm = OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model=settings.LLM_MODEL)
+    brain = AgentBrain(llm, tools=[], max_plan_steps=settings.JARVIS_AGENT_MAX_PLAN_STEPS)
+
+    info = brain.decide(brain.build_request("What is Python?", []))
+    assert info.intent in (Intent.INFORMATION_REQUEST, Intent.CONVERSATION)
+    assert info.action_required is False and info.error is None
+
+    action = brain.decide(brain.build_request("Send an email to John saying hello.", []))
+    assert action.intent is Intent.ACTION_REQUEST
+    assert action.action_required and action.requires_permission
+    assert action.plan is not None  # described only; nothing was sent

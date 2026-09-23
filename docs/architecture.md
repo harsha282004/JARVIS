@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 3** (conversation engine) on top of **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 4** (agent brain) on top of **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -37,6 +37,16 @@ implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
 
+## Phase 4 scope (agent brain)
+
+Phase 4 adds `agent/brain/` (`AgentBrain`, decision models, output
+validation) and `agent/planner/` (`Plan`, `Planner`), plus `ToolDescriptor` on
+the existing `Tool` interface. Boundary: `VoiceEngine -> ConversationEngine ->
+AgentBrain -> LLMProvider`. The brain produces a structured decision (intent,
+plan, tool names, permission needs, reply) and executes nothing; the
+`decision -> PermissionManager -> Tool` path is a later phase. No real tools
+exist. See `docs/agent-brain.md`.
+
 ## Phase 3 scope (conversation engine)
 
 Phase 3 adds `backend/core/conversation/` (`ConversationEngine`, session and
@@ -68,10 +78,11 @@ JARVIS/
 │   └── services/        business logic layer (empty — populated by later phases)
 │
 ├── agent/               Agentic reasoning boundary
-│   ├── planner/          turns a goal into steps (no implementation yet)
+│   ├── brain/            AgentBrain, decision models, LLM-output validation (Phase 4)
+│   ├── planner/          Plan models + deterministic Planner (Phase 4; describes, never runs)
 │   ├── memory/           MemoryInterface (no storage backend yet)
-│   ├── tools/            Tool interface (no concrete tools yet)
-│   └── orchestrator/     drives planner output through tools + memory (no implementation yet)
+│   ├── tools/            Tool interface + ToolDescriptor (no concrete tools yet)
+│   └── orchestrator/     will drive plans through PermissionManager + tools (empty; not built)
 │
 ├── voice/               Voice pipeline: audio I/O, wakeword/, stt/, tts/ providers,
 │                         and engine.py (VoiceEngine orchestrator) — see docs/voice-system.md
@@ -117,8 +128,8 @@ never calls a Tool directly.** See `docs/security.md`.
 | Concern       | Choice                              | Status |
 |---------------|--------------------------------------|--------------------|
 | Backend       | Python, FastAPI, WebSockets          | FastAPI app + `/health` only; no WebSocket endpoint yet |
-| Agent         | LangGraph, LangChain, custom tools   | Boundary/interfaces only; no dependency added yet |
-| LLM           | Ollama/local first, provider abstraction | `LLMProvider` interface only; no provider implemented |
+| Agent         | Custom brain/planner (LangGraph/LangChain not used) | AgentBrain + Planner implemented (Phase 4, decisions only); no tools, no execution |
+| LLM           | Ollama/local first, provider abstraction | `LLMProvider` (chat, json_mode hint) + `OllamaProvider` implemented |
 | Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic env configured; no schema |
 | Vector storage| pgvector or similar                  | Not set up yet — deferred until memory/RAG phase |
 | Embeddings    | SentenceTransformers                 | Not added yet |
@@ -152,6 +163,12 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 4 intentionally does not implement
+
+Any tool or tool execution, the permission workflow/UI, autonomous or
+multi-step execution, memory, and every integration. The brain classifies and
+plans only.
 
 ## What Phase 3 intentionally does not implement
 

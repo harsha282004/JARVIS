@@ -53,6 +53,14 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Agent brain (Phase 4)
+
+See `docs/agent-brain.md`. Tests (`tests/test_agent_*.py`,
+`tests/test_conversation_agent.py`) use a scripted fake LLM and need no Ollama;
+`tests/integration` has a real-Ollama classification test that skips when
+Ollama is not running. `JARVIS_AGENT_ENABLED=false` returns to plain Phase 3
+answers.
+
 ## Conversation engine (Phase 3)
 
 See `docs/conversation-engine.md`. Tests (`tests/test_conversation_engine.py`)
