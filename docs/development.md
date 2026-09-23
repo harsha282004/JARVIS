@@ -53,6 +53,13 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Personal RAG (Phase 7)
+
+See `docs/personal-rag.md`. Apply the schema with `alembic -c database/alembic.ini upgrade head`,
+index documents with `python scripts/rag_cli.py ingest <path>`. RAG tests use fake embeddings
+and an isolated SQLite database; `tests/integration` runs the real embedding model when it is
+cached locally (first download: run `scripts/rag_cli.py search x` once, or load the model).
+
 ## Personal memory (Phase 6)
 
 See `docs/personal-memory.md`. Apply the schema once with

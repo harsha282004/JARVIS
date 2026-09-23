@@ -13,6 +13,7 @@ from agent.brain.models import Intent
 MAX_OUTPUT_CHARS = 20_000
 MAX_TOOLS = 5
 MAX_SUMMARY_CHARS = 200
+MAX_QUERY_CHARS = 300
 
 
 class InvalidAgentOutput(Exception):
@@ -31,6 +32,12 @@ class LLMDecisionOutput(BaseModel):
     tools: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     summary: str = ""
+    query: str = ""
+
+    @field_validator("query")
+    @classmethod
+    def _clean_query(cls, value: str) -> str:
+        return " ".join(value.split())[:MAX_QUERY_CHARS]
 
     @field_validator("intent", mode="before")
     @classmethod

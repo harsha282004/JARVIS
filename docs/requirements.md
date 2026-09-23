@@ -84,6 +84,40 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 7 — Personal RAG
+
+### Functional requirements
+
+- Local ingestion of TXT, Markdown and PDF documents: validate, SHA-256 hash, extract
+  (PDF pages preserved), deterministic chunking (configurable size/overlap), local
+  embeddings, storage in PostgreSQL (`rag_documents`, `rag_chunks`, Alembic migration).
+- Content-hash identity: unchanged files are skipped, identical content under another
+  filename is recognized as a duplicate, changed files are re-indexed with no stale
+  chunks, and a failed re-index keeps the previous valid index.
+- Document statuses PENDING/PROCESSING/INDEXED/FAILED/DELETED with a content-free
+  failure reason; size and chunk limits reject rather than partially index.
+- Semantic retrieval: top-k, relevance threshold, results with chunk/document ids,
+  score, filename and page; no raw vectors exposed.
+- Grounded answers with source references; a controlled insufficient-context reply
+  when nothing relevant is found; no grounded claim when the LLM or retrieval fails.
+- Agent Brain `document_question` intent with a standalone query; the conversation
+  history stays owned by `ConversationEngine`.
+- Document deletion/reindex API that never touches the original file.
+- `JARVIS_RAG_*` settings in the existing `Settings`.
+
+### Non-functional requirements
+
+- Local only: no cloud upload, external embedding API or telemetry; no document text in logs.
+- Retrieved text is untrusted data: delimited, sanitized, never able to trigger tools,
+  approvals, memory writes or policy changes; the LLM cannot ingest or delete documents.
+- Separate from personal memory; RAG results are never stored as memory.
+- New dependencies limited to `pypdf` and `sentence-transformers`.
+
+### Explicitly out of scope for Phase 7
+
+Hybrid retrieval, reranking, OCR, DOCX, a document UI, pgvector/ChromaDB, Gmail/WhatsApp/
+Calendar ingestion, web crawling, the knowledge graph, and everything out of scope earlier.
+
 ## Phase 6 — Personal Memory
 
 ### Functional requirements

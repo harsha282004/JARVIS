@@ -7,6 +7,12 @@ today only one concrete implementation exists per interface.
 
 from agent.brain.brain import AgentBrain
 from agent.memory.models import Confidence
+from agent.rag.chunker import Chunker
+from agent.rag.documents import DocumentRepository
+from agent.rag.embeddings import SentenceTransformerProvider
+from agent.rag.retriever import Retriever
+from agent.rag.service import RagLimits, RagService
+from agent.rag.store import SqlVectorStore
 from agent.memory.policy import MemoryPolicy
 from agent.memory.repository import MemoryRepository
 from agent.memory.service import MemoryService
@@ -73,11 +79,35 @@ def _build_memory(settings: Settings) -> MemoryService | None:
     )
 
 
+def build_rag_service(settings: Settings, llm: LLMProvider) -> RagService | None:
+    if not settings.JARVIS_RAG_ENABLED:
+        return None
+    embedder = SentenceTransformerProvider(settings.JARVIS_RAG_EMBEDDING_MODEL)  # loads lazily
+    store = SqlVectorStore(SessionLocal)
+    return RagService(
+        documents=DocumentRepository(SessionLocal),
+        store=store,
+        embedder=embedder,
+        retriever=Retriever(embedder, store, settings.JARVIS_RAG_TOP_K, settings.JARVIS_RAG_MIN_SCORE),
+        llm=llm,
+        chunker=Chunker(settings.JARVIS_RAG_CHUNK_SIZE, settings.JARVIS_RAG_CHUNK_OVERLAP),
+        limits=RagLimits(
+            max_document_bytes=settings.JARVIS_RAG_MAX_DOCUMENT_SIZE_MB * 1024 * 1024,
+            max_chunks_per_document=settings.JARVIS_RAG_MAX_CHUNKS_PER_DOCUMENT,
+        ),
+    )
+
+
 def _build_conversation(settings: Settings) -> ConversationEngine:
     llm = _build_llm(settings)
     # No tools exist yet, so the brain is given an empty tool catalog.
     agent = (
-        AgentBrain(llm, tools=[], max_plan_steps=settings.JARVIS_AGENT_MAX_PLAN_STEPS)
+        AgentBrain(
+            llm,
+            tools=[],
+            max_plan_steps=settings.JARVIS_AGENT_MAX_PLAN_STEPS,
+            documents_enabled=settings.JARVIS_RAG_ENABLED,
+        )
         if settings.JARVIS_AGENT_ENABLED
         else None
     )
@@ -87,6 +117,7 @@ def _build_conversation(settings: Settings) -> ConversationEngine:
         timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
         agent=agent,
         memory=_build_memory(settings),
+        rag=build_rag_service(settings, llm),
         permissions=PermissionManager(
             tools=[],  # no tools exist yet, so every requested tool is denied as unknown
             audit=AuditLog(enabled=settings.JARVIS_PERMISSION_AUDIT_ENABLED),

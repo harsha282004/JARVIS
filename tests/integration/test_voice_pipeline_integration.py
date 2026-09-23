@@ -113,3 +113,59 @@ def test_real_ollama_agent_brain_classifies_info_and_action_requests():
     assert action.intent is Intent.ACTION_REQUEST
     assert action.action_required and action.requires_permission
     assert action.plan is not None  # described only; nothing was sent
+
+
+def _embedding_model_cached(model: str) -> bool:
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(model, local_files_only=True)
+        return True
+    except Exception:  # noqa: BLE001 - any failure means "not available offline"
+        return False
+
+
+@pytest.mark.integration
+def test_real_embedding_model_retrieves_relevant_chunk_and_rejects_unrelated_query(tmp_path):
+    """Real SentenceTransformers embeddings + the real vector-store code (on an isolated SQLite DB)."""
+    settings = get_settings()
+    if not _embedding_model_cached(settings.JARVIS_RAG_EMBEDDING_MODEL):
+        pytest.skip("Embedding model is not downloaded (run scripts/rag_cli.py once, or load it once)")
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import backend.models.rag  # noqa: F401
+    from agent.rag.chunker import Chunker
+    from agent.rag.documents import DocumentRepository
+    from agent.rag.embeddings import SentenceTransformerProvider
+    from agent.rag.retriever import Retriever
+    from agent.rag.service import RagService
+    from agent.rag.store import SqlVectorStore
+    from backend.core.llm.base import LLMProvider
+    from backend.models.base import Base
+
+    class Echo(LLMProvider):
+        def chat(self, messages, json_mode=False):
+            return "The project uses FastAPI for the backend."
+
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    embedder = SentenceTransformerProvider(settings.JARVIS_RAG_EMBEDDING_MODEL)
+    store = SqlVectorStore(sessions)
+    rag = RagService(
+        DocumentRepository(sessions), store, embedder,
+        Retriever(embedder, store, settings.JARVIS_RAG_TOP_K, settings.JARVIS_RAG_MIN_SCORE), Echo(), Chunker(),
+    )
+    doc = tmp_path / "test_document.txt"
+    doc.write_text("JARVIS test document.\nThe project uses FastAPI for the backend.\nThe frontend uses React.", encoding="utf-8")
+    assert rag.ingest_file(doc).outcome.value == "indexed"
+
+    answer = rag.answer("What backend framework does the project use?")
+    assert answer.grounded and "FastAPI" in rag.search("What backend framework does the project use?")[0].text
+    assert answer.sources[0].filename == "test_document.txt"
+
+    unrelated = rag.answer("What is the capital of France?")
+    assert unrelated.status.value == "insufficient_context" and unrelated.sources == []

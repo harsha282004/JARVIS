@@ -35,14 +35,23 @@ ACTION_RESPONSE = (
     "I understand what you're asking, but I can't carry out actions like that yet."
 )
 UNSUPPORTED_RESPONSE = "Sorry, I can't help with that."
+# Placeholder only: ConversationEngine replaces it with the grounded answer (or an honest unavailable message).
+DOCUMENT_LOOKUP_RESPONSE = "Let me check your documents."
 FALLBACK_RESPONSE = "Sorry, I had trouble working that out. Could you say it again?"
 
 _DIRECT_INTENTS = {Intent.CONVERSATION, Intent.INFORMATION_REQUEST, Intent.CLARIFICATION_REQUIRED}
 
 
 class AgentBrain:
-    def __init__(self, llm: LLMProvider, tools: Sequence[ToolDescriptor], max_plan_steps: int):
+    def __init__(
+        self,
+        llm: LLMProvider,
+        tools: Sequence[ToolDescriptor],
+        max_plan_steps: int,
+        documents_enabled: bool = False,
+    ):
         self._llm = llm
+        self._documents_enabled = documents_enabled
         self._tools = list(tools)
         self._planner = Planner(max_plan_steps)
 
@@ -52,7 +61,8 @@ class AgentBrain:
         """Wrap a user message and the conversation context supplied by
         ConversationEngine, attaching the tool descriptions this brain knows."""
         return AgentRequest(
-            user_text=user_text, context=list(context), tools=self._tools, memory_context=memory_context
+            user_text=user_text, context=list(context), tools=self._tools, memory_context=memory_context,
+            documents_enabled=self._documents_enabled,
         )
 
     def decide(self, request: AgentRequest) -> AgentDecision:
@@ -61,7 +71,7 @@ class AgentBrain:
         here and yields a safe fallback decision with `error` set."""
         logger.info("Agent request received (context_messages=%d)", len(request.context))
         messages = [
-            Message(Role.SYSTEM, build_system_prompt(request.tools, request.memory_context)),
+            Message(Role.SYSTEM, build_system_prompt(request.tools, request.memory_context, request.documents_enabled)),
             *request.context,
             Message(Role.USER, request.user_text),
         ]
@@ -101,6 +111,15 @@ class AgentBrain:
                 response=response,
                 confidence=output.confidence,
                 reasoning_summary=output.summary,
+            )
+        if output.intent is Intent.DOCUMENT_QUESTION:
+            return AgentDecision(
+                intent=output.intent,
+                action_required=False,
+                response=DOCUMENT_LOOKUP_RESPONSE,
+                confidence=output.confidence,
+                reasoning_summary=output.summary,
+                search_query=output.query or request.user_text[:300],
             )
         if output.intent is Intent.UNSUPPORTED_REQUEST:
             return AgentDecision(

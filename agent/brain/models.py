@@ -20,6 +20,7 @@ class Intent(StrEnum):
     ACTION_REQUEST = "action_request"
     CLARIFICATION_REQUIRED = "clarification_required"
     UNSUPPORTED_REQUEST = "unsupported_request"
+    DOCUMENT_QUESTION = "document_question"  # answer depends on the user's own indexed documents (Phase 7)
 
 
 class AgentRequest(BaseModel):
@@ -34,6 +35,8 @@ class AgentRequest(BaseModel):
     tools: list[ToolDescriptor] = Field(default_factory=list)
     # Delimited, sanitized personal-memory block (agent.memory.context); untrusted data.
     memory_context: str = ""
+    # True when personal-document search is available (Phase 7); only then is document_question offered.
+    documents_enabled: bool = False
 
 
 class ToolSelection(BaseModel):
@@ -66,6 +69,8 @@ class AgentDecision(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning_summary: str = ""
     error: AgentError | None = None
+    # Standalone search query for a document_question (resolves pronouns from the conversation).
+    search_query: str | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "AgentDecision":
@@ -74,6 +79,8 @@ class AgentDecision(BaseModel):
             raise ValueError("action_required must be true exactly for action_request")
         if not is_action and (self.plan or self.selected_tools or self.requires_permission):
             raise ValueError("only action_request decisions may carry a plan, tools or permission needs")
+        if self.search_query is not None and self.intent is not Intent.DOCUMENT_QUESTION:
+            raise ValueError("only document_question decisions may carry a search query")
         return self
 
     @property

@@ -76,3 +76,31 @@ def test_upgrade_on_a_disposable_postgresql_database():
         assert "personal_memories" in inspect(create_engine(url)).get_table_names()
     finally:
         command.downgrade(alembic_config(url), "base")
+
+
+def test_rag_tables_are_created_and_removed_with_the_migration(tmp_path):
+    from backend.models.rag import RagChunk, RagDocument
+
+    url = f"sqlite:///{tmp_path / 'rag.db'}"
+    command.upgrade(alembic_config(url), "head")
+    engine = create_engine(url)
+    inspector = inspect(engine)
+    assert {"rag_documents", "rag_chunks", "personal_memories"} <= set(inspector.get_table_names())
+    for model in (RagDocument, RagChunk):
+        assert {c["name"] for c in inspector.get_columns(model.__tablename__)} == {c.name for c in model.__table__.columns}
+    assert {i["name"] for i in inspector.get_indexes("rag_chunks")} >= {"ix_rag_chunks_document_id", "ix_rag_chunks_document_order"}
+    engine.dispose()
+
+    command.downgrade(alembic_config(url), "0001_personal_memories")
+    engine = create_engine(url)
+    tables = set(inspect(engine).get_table_names())
+    assert "rag_documents" not in tables and "rag_chunks" not in tables and "personal_memories" in tables
+    engine.dispose()
+
+
+def test_rag_postgresql_sql_needs_no_extension():
+    out = io.StringIO()
+    command.upgrade(alembic_config("postgresql+psycopg2://u:p@localhost/x", out), "head", sql=True)
+    sql = out.getvalue()
+    assert "CREATE TABLE rag_documents" in sql and "CREATE TABLE rag_chunks" in sql and "BYTEA" in sql
+    assert "CREATE EXTENSION" not in sql and "vector" not in sql.lower()

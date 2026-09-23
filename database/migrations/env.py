@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from backend.core.config import get_settings  # noqa: E402
 from backend.models.base import Base  # noqa: E402
 import backend.models.memory  # noqa: E402,F401  (registers the table)
+import backend.models.rag  # noqa: E402,F401  (registers the tables)
 
 config = context.config
 settings = get_settings()

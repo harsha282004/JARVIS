@@ -92,6 +92,17 @@ class Settings(BaseSettings):
     # Candidates below this confidence are never auto-saved.
     JARVIS_MEMORY_MIN_CONFIDENCE: Literal["low", "medium", "high"] = "medium"
 
+    # --- Personal RAG (local documents; separate from personal memory) ---
+    JARVIS_RAG_ENABLED: bool = True
+    JARVIS_RAG_EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    JARVIS_RAG_TOP_K: int = Field(default=5, ge=1, le=20)
+    JARVIS_RAG_CHUNK_SIZE: int = Field(default=800, ge=50)
+    JARVIS_RAG_CHUNK_OVERLAP: int = Field(default=100, ge=0)
+    # Cosine similarity below this is treated as not relevant (insufficient-context path).
+    JARVIS_RAG_MIN_SCORE: float = Field(default=0.35, ge=-1.0, le=1.0)
+    JARVIS_RAG_MAX_DOCUMENT_SIZE_MB: int = Field(default=25, ge=1)
+    JARVIS_RAG_MAX_CHUNKS_PER_DOCUMENT: int = Field(default=2000, ge=1)
+
     # --- Permissions & security audit ---
     # How long a permission request stays valid. Unknown tools are always denied;
     # that is an invariant, not a setting.

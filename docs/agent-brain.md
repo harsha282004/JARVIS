@@ -48,6 +48,7 @@ Kept deliberately small (`Intent`):
 | `action_request` | the user wants JARVIS to *do* something | true | fixed safe text |
 | `clarification_required` | too vague to act on, even with the conversation | false | the LLM's question |
 | `unsupported_request` | something JARVIS cannot or should not do | false | fixed safe text |
+| `document_question` (Phase 7, only when RAG is enabled) | the answer depends on the user's indexed documents | false | `RagService` grounded answer; the brain only supplies a standalone `search_query` |
 
 Classification is done by the LLM (one JSON call, so the direct answer costs
 no extra round trip); the code validates it and never trusts it further than

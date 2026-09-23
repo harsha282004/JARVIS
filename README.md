@@ -3,9 +3,15 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 6 — Personal Memory
+## Current status: Phase 7 — Personal RAG
 
-Phases 0-5 are complete. Phase 6 adds persistent personal memory: JARVIS
+Phases 0-6 are complete. Phase 7 lets JARVIS index your own TXT, Markdown and
+PDF documents locally (chunking, local SentenceTransformers embeddings, a
+PostgreSQL-backed vector store) and answer questions grounded in them, with
+source/page references and an honest "I couldn't find enough information" path when
+nothing relevant is indexed. Documents are untrusted data and cannot trigger tools.
+It is separate from personal memory. Run `alembic -c database/alembic.ini upgrade head`,
+then `python scripts/rag_cli.py ingest <file-or-folder>`. Phase 6 adds persistent personal memory: JARVIS
 extracts explicit, low-risk statements you make ("My favorite programming
 language is Java"), stores short notes in your local PostgreSQL database, and
 uses the relevant ones as context in later sessions. Secrets are never stored,
@@ -42,7 +48,8 @@ voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/conversation-engine.md` for multi-turn conversation,
 `docs/agent-brain.md` for the agent brain,
 `docs/security-and-permissions.md` for the permission layer,
-`docs/personal-memory.md` for personal memory, and `docs/requirements.md` for what each
+`docs/personal-memory.md` for personal memory,
+`docs/personal-rag.md` for personal RAG, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -68,8 +75,8 @@ desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) �
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory docs
-scripts/        Operational scripts (check_db.py, run_voice.py)
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag docs
+scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py)
 ```
 
 Every future component (LLM provider, tool, integration, memory backend,
@@ -125,6 +132,9 @@ lifecycle, startup integration, troubleshooting and limitations.
   detection yet).
 - Follow-up listening is a fixed window; no interruption (barge-in) handling.
 - Conversation context is in memory only, limited by message count.
+- RAG: TXT/Markdown/PDF only (no OCR, DOCX or hybrid search); exact vector search that
+  scales linearly; first document question loads the embedding model (slow); verified
+  here with real embeddings on SQLite, not on the development PostgreSQL or a real Ollama.
 - Memory: rule-based extraction of English statements, keyword retrieval, no
   confirmation/correction/delete UI; PostgreSQL persistence not verified on the
   development machine (see docs/personal-memory.md).
@@ -148,7 +158,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory. Later phases — tools, the approval UI, RAG,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG. Later phases — tools, the approval UI, the knowledge graph,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

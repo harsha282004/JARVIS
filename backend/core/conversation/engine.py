@@ -12,10 +12,13 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 
 from agent.brain.brain import AgentBrain
-from agent.brain.models import AgentDecision
+from agent.brain.models import AgentDecision, Intent
 from agent.brain.permissions import request_permissions
 from agent.memory.context import build_memory_block
 from agent.memory.service import MemoryService
+from agent.rag.grounding import RAG_DISABLED_RESPONSE
+from agent.rag.models import RAGAnswer
+from agent.rag.service import RagService
 from backend.core.conversation.models import ConversationSession
 from backend.core.conversation.prompts import SYSTEM_PROMPT
 from backend.core.llm.base import LLMProvider
@@ -43,6 +46,7 @@ class ConversationEngine:
         agent: AgentBrain | None = None,
         permissions: PermissionManager | None = None,
         memory: MemoryService | None = None,
+        rag: RagService | None = None,
     ):
         if max_messages < MIN_MAX_MESSAGES:
             raise ValueError(f"max_messages must be at least {MIN_MAX_MESSAGES}")
@@ -54,9 +58,11 @@ class ConversationEngine:
         self._agent = agent
         self._permissions = permissions
         self._memory = memory
+        self._rag = rag
         self._session: ConversationSession | None = None
         self.last_decision: AgentDecision | None = None
         self.last_permission_requests: list[PermissionRequest] = []
+        self.last_rag_answer: RAGAnswer | None = None
 
     @property
     def session(self) -> ConversationSession | None:
@@ -86,6 +92,7 @@ class ConversationEngine:
             session = self._new_session()
         user_message = Message(Role.USER, text, self._clock())
 
+        self.last_rag_answer = None
         memory_block = self._memory_block(text)
         reply = self._generate_reply(session, user_message, memory_block)
 
@@ -108,6 +115,25 @@ class ConversationEngine:
         """End the current session and discard its history; the next turn starts a new one."""
         if self._session is not None:
             self._end_session("reset")
+
+    def _answer_from_documents(
+        self, decision: AgentDecision, user_message: Message, history: Sequence[Message], memory_block: str
+    ) -> str:
+        """Answer a document question from the user's indexed documents (Phase 7).
+
+        History stays owned by this engine and is only passed through. The
+        answer is never stored as personal memory. If the LLM fails, the
+        exception propagates and nothing is recorded, as for any other turn."""
+        if self._rag is None:
+            return RAG_DISABLED_RESPONSE
+        answer = self._rag.answer(
+            decision.search_query or user_message.content, history, user_message.content, memory_block
+        )
+        self.last_rag_answer = answer
+        logger.info(
+            "Document question answered (status=%s, sources=%d)", answer.status.value, len(answer.sources)
+        )
+        return answer.answer
 
     def _memory_block(self, text: str) -> str:
         """Relevant stored memories as a delimited block. Any memory failure means
@@ -142,6 +168,8 @@ class ConversationEngine:
         request = self._agent.build_request(user_message.content, context[1:-1], memory_block)
         decision = self._agent.decide(request)
         self.last_decision = decision
+        if decision.intent is Intent.DOCUMENT_QUESTION:
+            return self._answer_from_documents(decision, user_message, context[1:-1], memory_block)
         return decision.response
 
     def _request_permissions(self, session_id: str) -> None:

@@ -37,8 +37,28 @@ def _describe_tools(tools: Sequence[ToolDescriptor]) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(tools: Sequence[ToolDescriptor], memory_context: str = "") -> str:
-    prompt = f"{SYSTEM_PROMPT}\n\n{_DECISION_INSTRUCTIONS}\nAVAILABLE TOOLS:\n{_describe_tools(tools)}"
+_DOCUMENT_INTENT = (
+    "- document_question: the answer depends on the user's OWN personal documents (their resume, reports, notes or "
+    "files they added), not on general knowledge. Set \"query\" to a short standalone search query that resolves "
+    "pronouns using the earlier conversation. Use \"\" for response.\n"
+)
+
+
+def _decision_instructions(documents_enabled: bool) -> str:
+    if not documents_enabled:
+        return _DECISION_INSTRUCTIONS
+    text = _DECISION_INSTRUCTIONS.replace('"summary": "..."}', '"summary": "...", "query": "..."}', 1)
+    marker = "- action_request:"
+    return text.replace(marker, _DOCUMENT_INTENT + marker, 1)
+
+
+def build_system_prompt(
+    tools: Sequence[ToolDescriptor], memory_context: str = "", documents_enabled: bool = False
+) -> str:
+    prompt = (
+        f"{SYSTEM_PROMPT}\n\n{_decision_instructions(documents_enabled)}"
+        f"\nAVAILABLE TOOLS:\n{_describe_tools(tools)}"
+    )
     # Memory goes last, inside its own delimiters, after every rule it must not override.
     return f"{prompt}\n\n{memory_context}" if memory_context else prompt
 

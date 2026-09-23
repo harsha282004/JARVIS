@@ -39,6 +39,9 @@ logs the underlying error.
 - `personal_memories` (Phase 6): extracted personal memory notes. Migration
   `0001_personal_memories`. Apply with `alembic -c database/alembic.ini upgrade head`.
 
+- `rag_documents`, `rag_chunks` (Phase 7): personal RAG document metadata and chunk vectors
+  (embeddings stored as float32 bytes; no PostgreSQL extension needed). Migration `0002_rag_tables`.
+
 ## Migrations
 
 Once real models exist, generate and apply migrations with:

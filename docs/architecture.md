@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 6** (personal memory) on top of **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 7** (personal RAG) on top of **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -36,6 +36,18 @@ introducing a second configuration or logging system. It does **not**
 implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
+
+## Phase 7 scope (personal RAG)
+
+Phase 7 adds `agent/rag/`: document loaders, a deterministic chunker, a local
+`EmbeddingProvider` (SentenceTransformers), a `VectorStore` (PostgreSQL tables,
+exact cosine search; no pgvector/ChromaDB), a `Retriever` with top-k and a relevance
+threshold, grounded prompting with sources, and `RagService` (ingest, reindex, delete,
+answer), plus tables `rag_documents`/`rag_chunks` and migration `0002`. The Agent
+Brain gained a `document_question` intent; `ConversationEngine` routes those to
+`RagService.answer`. Retrieved text is untrusted data, never reaches the brain's decision
+call, and cannot trigger tools or memory writes. RAG is separate from Phase 6 memory.
+See `docs/personal-rag.md`.
 
 ## Phase 6 scope (personal memory)
 
@@ -104,6 +116,7 @@ JARVIS/
 │   ├── brain/            AgentBrain, decision models, LLM-output validation (Phase 4)
 │   ├── planner/          Plan models + deterministic Planner (Phase 4; describes, never runs)
 │   ├── memory/           personal memory: interface, service, repository, extraction, safety (Phase 6)
+│   ├── rag/              personal RAG: loaders, chunker, embeddings, vector store, retriever, service (Phase 7)
 │   ├── tools/            Tool interface + ToolDescriptor (no concrete tools yet)
 │   └── orchestrator/     will drive plans through PermissionManager + tools (empty; not built)
 │
@@ -153,9 +166,9 @@ never calls a Tool directly.** See `docs/security.md`.
 | Backend       | Python, FastAPI, WebSockets          | FastAPI app + `/health` only; no WebSocket endpoint yet |
 | Agent         | Custom brain/planner (LangGraph/LangChain not used) | AgentBrain + Planner implemented (Phase 4, decisions only); no tools, no execution |
 | LLM           | Ollama/local first, provider abstraction | `LLMProvider` (chat, json_mode hint) + `OllamaProvider` implemented |
-| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; one table (`personal_memories`, Phase 6) |
-| Vector storage| pgvector or similar                  | Not set up yet — deferred until memory/RAG phase |
-| Embeddings    | SentenceTransformers                 | Not added yet |
+| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; `personal_memories` (Phase 6), `rag_documents`, `rag_chunks` (Phase 7) |
+| Vector storage| pgvector or similar                  | PostgreSQL tables + exact NumPy cosine search (Phase 7; pgvector deliberately not required) |
+| Embeddings    | SentenceTransformers                 | Implemented (Phase 7, local, all-MiniLM-L6-v2) |
 | Voice         | wake-word engine, Whisper/Faster-Whisper, TTS | Implemented: openWakeWord, Faster-Whisper, Piper (see docs/voice-system.md) |
 | Frontend      | React, Tailwind CSS                  | Not scaffolded yet |
 | Desktop       | Windows background app, tray, startup | Implemented: pystray tray, Startup-folder shortcut (no installer/service) |
@@ -186,6 +199,11 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 7 intentionally does not implement
+
+Hybrid retrieval, reranking, OCR/DOCX, a document-management UI, pgvector/ChromaDB, email,
+messaging or calendar ingestion, web crawling, and everything in the Phase 6 list below.
 
 ## What Phase 6 intentionally does not implement
 

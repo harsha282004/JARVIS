@@ -174,6 +174,12 @@ change policy, and memory writes only happen from code on the user's own words, 
 from model output. Ordinary memory reads/writes are internal operations and are not
 permission-gated.
 
+## Personal RAG and this boundary (Phase 7)
+
+Retrieved document text is untrusted data in a delimited block (`docs/personal-rag.md`).
+It is never given to the agent's decision call, the document-answer path has no tools, and
+it cannot ingest/delete documents, write memory, approve requests or alter policy.
+
 ## Configuration
 
 | Setting | Default |
