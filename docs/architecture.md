@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 9** (tasks and reminders) on top of **Phase 8** (personal knowledge graph), **Phase 7** (personal RAG), **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 10** (Gmail intelligence, read-only) on top of **Phase 9** (tasks and reminders), **Phase 8** (personal knowledge graph), **Phase 7** (personal RAG), **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -36,6 +36,16 @@ introducing a second configuration or logging system. It does **not**
 implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
+
+## Phase 10 scope (Gmail intelligence)
+
+Phase 10 adds `integrations/gmail/`: a `GmailClient` interface with an httpx implementation (GET-only, bounded
+retries), OAuth 2.0 desktop authentication with the read-only scope, MIME/HTML parsing into JARVIS-owned models,
+whitelist-validated search queries, deterministic classification and grounded local-LLM summaries, and five
+read-only tools. The AgentBrain may propose a validated `GmailAction` (words only, never ids or URLs); the same
+`TaskActionExecutor` puts it through the `PermissionManager` and a `Tool`. Email text is untrusted: it never
+reaches the brain and never enters the conversation history. No database table, no mailbox mirror. See
+`docs/gmail-intelligence.md`.
 
 ## Phase 9 scope (tasks and reminders)
 
@@ -231,6 +241,12 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 10 intentionally does not implement
+
+Sending, replying, deleting, labelling, archiving or marking mail, attachment download or indexing, a Gmail cache
+or mirror, Gmail-derived memory or graph entities, Calendar, WhatsApp/other messaging, proactive alerts, a daily
+briefing, automation, a dashboard, and everything in the Phase 9 list below.
 
 ## What Phase 9 intentionally does not implement
 

@@ -53,6 +53,14 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Gmail (Phase 10)
+
+See `docs/gmail-intelligence.md` for the Google Cloud setup. In short: enable the Gmail API, create a *Desktop
+app* OAuth client, save its JSON as `.jarvis/gmail/credentials.json` (or set `GMAIL_CLIENT_ID` /
+`GMAIL_CLIENT_SECRET` in `.env`), set `JARVIS_GMAIL_ENABLED=true`, then run `python scripts/gmail_cli.py auth`.
+`status`, `check` and `search "<query>"` help verify it. Tests (`tests/test_gmail_*.py`) need no account; the
+opt-in real test (`tests/integration/test_gmail_real.py`) is read-only and skips without a token.
+
 ## Tasks and reminders (Phase 9)
 
 See `docs/tasks-and-reminders.md`. Apply the schema with `alembic -c database/alembic.ini upgrade head`

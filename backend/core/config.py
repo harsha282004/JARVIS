@@ -9,7 +9,7 @@ from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -125,6 +125,19 @@ class Settings(BaseSettings):
     JARVIS_DEFAULT_TASK_PRIORITY: Literal["low", "medium", "high", "critical"] = "medium"
     JARVIS_REMINDER_DESKTOP_NOTIFICATIONS: bool = True
     JARVIS_REMINDER_VOICE_NOTIFICATIONS: bool = True
+
+    # --- Gmail intelligence (read-only; off until you set it up, see docs/gmail-intelligence.md) ---
+    JARVIS_GMAIL_ENABLED: bool = False
+    # OAuth client id/secret from your Google Cloud "Desktop app" client, as an alternative to the JSON file below.
+    # (`.env` is git-ignored. The secret is never printed or logged.)
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: SecretStr = SecretStr("")
+    # Google OAuth "Desktop app" client file and the token created by `python scripts/gmail_cli.py auth`.
+    # Relative paths are relative to the project folder. Both locations are git-ignored.
+    JARVIS_GMAIL_CREDENTIALS_PATH: str = ".jarvis/gmail/credentials.json"
+    JARVIS_GMAIL_TOKEN_PATH: str = ".jarvis/gmail/token.json"
+    # Most emails fetched by one search (JARVIS never downloads a whole mailbox).
+    JARVIS_GMAIL_MAX_RESULTS: int = Field(default=10, ge=1, le=50)
 
     # --- Permissions & security audit ---
     # How long a permission request stays valid. Unknown tools are always denied;

@@ -54,6 +54,8 @@ class ActionOutcome:
     reply: str
     permission_request: PermissionRequest | None = None
     executed: bool = False
+    # What the conversation history should keep instead of `reply` (Gmail replies contain untrusted email text).
+    history_text: str | None = None
 
 
 @dataclass
@@ -130,13 +132,17 @@ class TaskActionExecutor:
             reply = tool.execute(self._permissions, request.request_id, session_id=session_id, **params)
         except Exception as exc:  # noqa: BLE001
             return ActionOutcome(self._failure(exc).reply, request)
-        return ActionOutcome(str(reply), request, executed=True)
+        return ActionOutcome(str(reply), request, executed=True, history_text=getattr(tool, "history_placeholder", None))
 
     @staticmethod
     def _failure(exc: Exception) -> ActionOutcome:
         if isinstance(exc, PermissionDenied):
             logger.warning("Task tool was not authorized")
             return ActionOutcome(DENIED_REPLY)
+        spoken = getattr(exc, "user_message", None)
+        if isinstance(spoken, str) and spoken:  # integration errors (Gmail) carry a speakable, content-free message
+            logger.warning("Action failed (%s)", type(exc).__name__)
+            return ActionOutcome(spoken)
         if isinstance(exc, TaskStorageError):
             logger.error("Task database unavailable (%s)", type(exc).__name__)
             return ActionOutcome(STORAGE_REPLY)

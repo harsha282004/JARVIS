@@ -3,9 +3,14 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 9 — Task & Reminder Engine
+## Current status: Phase 10 — Gmail Intelligence
 
-Phases 0-8 are complete. Phase 9 adds a persistent local task and reminder engine: "Remind me tomorrow at 9 AM to
+Phases 0-9 are complete. Phase 10 lets JARVIS read your Gmail **read-only** (OAuth desktop flow, `gmail.readonly`
+scope): search, read messages and threads, attachment metadata, classification and local-LLM summaries ("Do I have
+unread emails?", "Summarize the latest email from John"). It goes through the same PermissionManager-gated tool
+path, email text is treated as untrusted data (never shown to the agent brain or kept in history), results are
+bounded, and nothing is sent, deleted or modified. Off by default: follow `docs/gmail-intelligence.md`, then
+`python scripts/gmail_cli.py auth`. Phase 9 adds a persistent local task and reminder engine: "Remind me tomorrow at 9 AM to
 submit my assignment", "Remind me every Monday at 8 AM to review my weekly goals", "What tasks do I have today?",
 "Mark my JARVIS documentation task as completed", "Cancel my assignment reminder". Times are parsed in your
 `JARVIS_TIMEZONE` and stored as UTC in PostgreSQL; a scheduler thread started by the Windows launcher delivers due
@@ -52,8 +57,8 @@ the voice engine as a persistent Windows background app with a system-tray
 icon (status, pause/resume, restart, exit), graceful shutdown, sleep/resume
 recovery, and optional start-with-Windows. Phase 1 provides a functional local
 voice pipeline: say "Hey JARVIS", ask a question, get a spoken answer from
-a local LLM via Ollama. **The only tools are the local task/reminder ones; integrations
-(Gmail, Calendar, messaging, ...), proactive features, installer/packaging and the frontend
+a local LLM via Ollama. **The only tools are the local task/reminder ones and the read-only Gmail ones; other integrations
+(Calendar, messaging, ...), proactive features, installer/packaging and the frontend
 are not implemented yet.** Conversation history itself is in memory
 only and is lost on exit; durable knowledge lives in personal memory, RAG and
 the knowledge graph.
@@ -65,7 +70,7 @@ voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/security-and-permissions.md` for the permission layer,
 `docs/personal-memory.md` for personal memory,
 `docs/personal-rag.md` for personal RAG,
-`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, and `docs/requirements.md` for what each
+`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, `docs/gmail-intelligence.md` for Gmail, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -92,7 +97,7 @@ frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
 docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph, tasks-and-reminders docs
-scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py, kg_cli.py)
+scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py, kg_cli.py, gmail_cli.py)
 ```
 
 Every future component (LLM provider, tool, integration, memory backend,
@@ -148,6 +153,8 @@ lifecycle, startup integration, troubleshooting and limitations.
   detection yet).
 - Follow-up listening is a fixed window; no interruption (barge-in) handling.
 - Conversation context is in memory only, limited by message count.
+- Gmail: read-only; summaries are local-LLM output and can be wrong; follow-ups do not refer to earlier email
+  replies; setup is manual (Google Cloud OAuth client); untested against a real account here.
 - Tasks/reminders: English only, a subset of recurrences, reminders fire only while JARVIS runs (no Windows
   service), voice delivery is best effort, cancelling is confirmed by a spoken yes; verified here on SQLite, not on
   the development PostgreSQL (see docs/tasks-and-reminders.md).
@@ -165,7 +172,8 @@ lifecycle, startup integration, troubleshooting and limitations.
   declined because no such tools exist; classification quality depends on the local model.
 - Runtime: no installer or Windows service; no external control besides the
   tray/Ctrl+C; sleep is detected after the fact (see the runtime doc).
-- JARVIS has no Gmail, Calendar or messaging — it will say so if asked, rather than inventing an answer.
+- JARVIS has no Calendar or messaging, and Gmail is read-only (no sending or changing mail) — it will say so if
+  asked, rather than inventing an answer. Gmail was not verified here against a real account.
 
 ## Security model
 
@@ -178,7 +186,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders. Later phases — more tools, the approval UI,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders and Phase 10 read-only Gmail. Later phases — more tools, the approval UI,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

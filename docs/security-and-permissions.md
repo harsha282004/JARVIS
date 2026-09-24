@@ -189,6 +189,16 @@ Graph facts are untrusted data in a delimited block (`docs/knowledge-graph.md`).
 never writes to the graph directly (validated typed facts through `GraphService` only), the agent
 holds no graph reference, and graph content cannot approve requests, run tools or alter policy.
 
+## Gmail tools and this boundary (Phase 10)
+
+Five read-only Gmail tools (`gmail_search`, `gmail_get_message`, `gmail_get_thread`, `gmail_summarize`,
+`gmail_classify`) are registered LOW risk, no approval, ONE_TIME scope, bound to the exact parameters; no Gmail
+request happens before authorization. The OAuth scope is `gmail.readonly`, so even a bug could not send or modify
+mail. Send/delete/modify tools do not exist and are denied as unknown. The model supplies only a validated search
+query and flags: ids, URLs, tokens, methods, paths and commands make the action invalid. Email content is untrusted:
+it is only given, sanitized and delimited, to a tool-less summarizer, never to the AgentBrain, and Gmail replies
+are replaced by a placeholder in the conversation history. See `docs/gmail-intelligence.md`.
+
 ## Task and reminder tools and this boundary (Phase 9)
 
 The first concrete tools are local: `create_task`, `create_reminder`, `list_tasks`, `list_reminders`,

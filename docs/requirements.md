@@ -84,6 +84,36 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 10 — Gmail Intelligence
+
+### Functional requirements
+
+- Gmail OAuth 2.0 for a local desktop app with the least-privilege `gmail.readonly` scope; token storage, refresh,
+  revoked-authorization detection and a clear setup error when credentials are missing.
+- A `GmailClient` abstraction, JARVIS-owned message/thread/attachment-metadata models, robust MIME/HTML body
+  extraction, chronological threads.
+- Bounded, whitelist-validated search (Gmail operators), pagination, no-result and ambiguity handling.
+- Deterministic classification (important, action required, informational, promotional, personal, unknown) and
+  grounded summaries (message, thread, action items) using the local LLM.
+- Strict AgentBrain Gmail actions (`gmail_search`, `gmail_get_message`, `gmail_get_thread`, `gmail_summarize`,
+  `gmail_classify`); the model can never supply ids, URLs, tokens, paths or commands; messages are identified by code.
+- Read-only, PermissionManager-gated tools; unregistered Gmail tools stay denied.
+- Bounded retries and backoff for rate limits and outages, with speakable errors.
+- `JARVIS_GMAIL_ENABLED`, `JARVIS_GMAIL_CREDENTIALS_PATH`, `JARVIS_GMAIL_TOKEN_PATH`, `JARVIS_GMAIL_MAX_RESULTS`
+  (plus `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET`); credentials and tokens git-ignored.
+
+### Non-functional requirements
+
+- Email is untrusted data: delimited and sanitized for the summarizer, never shown to the brain, never kept in
+  history; it cannot invoke tools, change permissions or reach the filesystem.
+- No email content, tokens or secrets in logs; no mailbox persistence; local Ollama only.
+- New dependencies: `google-auth`, `google-auth-oauthlib` (and `requests`).
+
+### Explicitly out of scope for Phase 10
+
+Sending, deleting, modifying, labelling or archiving mail, attachment download/RAG, Calendar, messaging platforms,
+proactive intelligence, daily briefing, automation, remote access, a dashboard, and everything out of scope earlier.
+
 ## Phase 9 — Task & Reminder Engine
 
 ### Functional requirements

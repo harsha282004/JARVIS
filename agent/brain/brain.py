@@ -22,6 +22,12 @@ from agent.brain.parsing import InvalidAgentOutput, LLMDecisionOutput, parse_dec
 from agent.brain.prompts import RETRY_PROMPT, build_system_prompt
 from agent.planner.planner import Planner
 from agent.tasks.intents import InvalidTaskAction, TaskAction, parse_task_action
+from integrations.gmail.intents import (
+    GMAIL_ACTION_NAMES,
+    GmailAction,
+    InvalidGmailAction,
+    parse_gmail_action,
+)
 from agent.tools.base import ToolDescriptor
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.messages import Message, Role
@@ -104,6 +110,8 @@ class AgentBrain:
 
     def _interpret(self, raw: str, request: AgentRequest) -> AgentDecision:
         output = parse_decision_output(raw)
+        if output.action is not None and output.intent is Intent.INFORMATION_REQUEST:
+            output = output.model_copy(update={"intent": Intent.ACTION_REQUEST})  # "any unread mail?" with a Gmail action
         if output.intent in _DIRECT_INTENTS:
             response = output.response.strip()
             if not response:
@@ -136,10 +144,11 @@ class AgentBrain:
 
     def _action_decision(self, output: LLMDecisionOutput, request: AgentRequest) -> AgentDecision:
         catalog = {tool.name.lower(): tool for tool in request.tools}
-        task_action = self._task_action(output, catalog)
+        task_action, gmail_action = self._proposed_action(output, catalog)
+        proposed = task_action or gmail_action
         names = list(output.tools)
-        if task_action is not None and task_action.name.value not in {n.lower() for n in names}:
-            names.append(task_action.name.value)  # the action itself names the tool it needs
+        if proposed is not None and proposed.name.value not in {n.lower() for n in names}:
+            names.append(proposed.name.value)  # the action itself names the tool it needs
         selections = [self._select(name, catalog) for name in names]
         # Fail-safe: permission is required unless every tool is known and says it is not.
         requires_permission = not selections or any(
@@ -161,19 +170,27 @@ class AgentBrain:
             confidence=output.confidence,
             reasoning_summary=output.summary,
             task_action=task_action,
+            gmail_action=gmail_action,
         )
 
     @staticmethod
-    def _task_action(output: LLMDecisionOutput, catalog: dict[str, ToolDescriptor]) -> TaskAction | None:
-        """Validate the model's proposed action. An invalid one makes the whole output invalid (retry, then the
-        safe fallback). A valid action for a tool that is not available (e.g. tasks are turned off) is dropped."""
+    def _proposed_action(
+        output: LLMDecisionOutput, catalog: dict[str, ToolDescriptor]
+    ) -> tuple[TaskAction | None, GmailAction | None]:
+        """Validate the model's proposed action (task/reminder or Gmail). An invalid one makes the whole output
+        invalid (retry, then the safe fallback). A valid action for a tool that is not available (e.g. Gmail is
+        turned off) is dropped."""
         if output.action is None:
-            return None
+            return None, None
+        name = output.action.get("name")
         try:
-            action = parse_task_action(output.action)
-        except InvalidTaskAction as exc:
+            if isinstance(name, str) and name.strip().lower() in GMAIL_ACTION_NAMES:
+                gmail = parse_gmail_action(output.action)
+                return None, (gmail if gmail.name.value in catalog else None)
+            task = parse_task_action(output.action)
+        except (InvalidTaskAction, InvalidGmailAction) as exc:
             raise InvalidAgentOutput(f"invalid action ({exc})") from None
-        return action if action.name.value in catalog else None
+        return (task if task.name.value in catalog else None), None
 
     @staticmethod
     def _select(name: str, catalog: dict[str, ToolDescriptor]) -> ToolSelection:

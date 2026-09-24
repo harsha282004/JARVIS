@@ -33,9 +33,15 @@ from agent.tasks.system import TaskSystem
 from agent.tasks.timeparse import TimeParser
 from agent.tasks.tools import TaskToolContext, build_task_tools
 from agent.tasks.zone import resolve_timezone
+from integrations.gmail.auth import GmailAuthenticator
+from integrations.gmail.client import HttpGmailClient
+from integrations.gmail.service import GmailService
+from integrations.gmail.tools import GmailTool, GmailToolContext, build_gmail_tools
 from agent.memory.policy import MemoryPolicy
 from agent.memory.repository import MemoryRepository
 from agent.memory.service import MemoryService
+from pathlib import Path
+
 from backend.core.config import Settings
 from backend.core.database import SessionLocal
 from backend.core.conversation.engine import ConversationEngine
@@ -184,9 +190,42 @@ def build_reminder_scheduler(
     )
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _project_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def build_gmail_authenticator(settings: Settings) -> GmailAuthenticator:
+    return GmailAuthenticator(
+        _project_path(settings.JARVIS_GMAIL_CREDENTIALS_PATH),
+        _project_path(settings.JARVIS_GMAIL_TOKEN_PATH),
+        settings.GMAIL_CLIENT_ID,
+        settings.GMAIL_CLIENT_SECRET.get_secret_value(),
+    )
+
+
+def build_gmail_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[GmailTool]:
+    """The read-only Gmail tools, or none when Gmail is disabled. Building them never contacts Google and never
+    fails for missing credentials: a request then gets a clear setup message (see docs/gmail-intelligence.md).
+    Summaries use the same local LLM as everything else."""
+    if not settings.JARVIS_GMAIL_ENABLED:
+        return []
+    auth = build_gmail_authenticator(settings)
+    service = GmailService(
+        HttpGmailClient(auth), llm, max_results=settings.JARVIS_GMAIL_MAX_RESULTS, is_ready=auth.is_ready
+    )
+    return build_gmail_tools(GmailToolContext(service, zone, utcnow))
+
+
 def _build_conversation(settings: Settings, task_system: TaskSystem | None = None) -> ConversationEngine:
     llm = _build_llm(settings)
-    tools = task_system.tools if task_system is not None else []
+    tools = list(task_system.tools) if task_system is not None else []
+    if settings.JARVIS_GMAIL_ENABLED:
+        zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
+        tools += build_gmail_tools_for(settings, llm, zone)
     descriptors = [tool.descriptor() for tool in tools]
     agent = (
         AgentBrain(

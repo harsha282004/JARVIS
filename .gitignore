@@ -1,4 +1,10 @@
 # Environment / secrets
+# Gmail OAuth client file and token (never commit)
+/.jarvis/
+client_secret*.json
+credentials.json
+token.json
+gmail_token*.json
 .env
 .env.*
 !.env.example

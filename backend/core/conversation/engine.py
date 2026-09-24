@@ -70,6 +70,7 @@ class ConversationEngine:
         self.last_permission_requests: list[PermissionRequest] = []
         self.last_rag_answer: RAGAnswer | None = None
         self._action_handled = False
+        self._history_override: str | None = None
 
     @property
     def session(self) -> ConversationSession | None:
@@ -108,7 +109,8 @@ class ConversationEngine:
             self._session = session
             logger.info("Conversation session started (session=%s)", session.session_id)
         session.add(user_message)
-        session.add(Message(Role.ASSISTANT, reply, self._clock()))
+        # Replies built from email text are kept out of the history: the model must never read attacker-written text as context.
+        session.add(Message(Role.ASSISTANT, self._history_override or reply, self._clock()))
         session.messages[:] = self._window(session.messages)
         self._request_permissions(session.session_id)
         self._remember(text)
@@ -180,6 +182,7 @@ class ConversationEngine:
         self, session: ConversationSession, user_message: Message, memory_block: str = "", graph_block: str = ""
     ) -> str:
         self._action_handled = False
+        self._history_override = None
         confirmed = self._answer_confirmation(session, user_message)
         if confirmed is not None:
             return confirmed
@@ -191,7 +194,7 @@ class ConversationEngine:
         request = self._agent.build_request(user_message.content, context[1:-1], memory_block, graph_block)
         decision = self._agent.decide(request)
         self.last_decision = decision
-        if decision.task_action is not None and self._actions is not None:
+        if (decision.task_action is not None or decision.gmail_action is not None) and self._actions is not None:
             return self._carry_out_action(decision, session)
         if decision.intent is Intent.DOCUMENT_QUESTION:
             return self._answer_from_documents(
@@ -215,11 +218,13 @@ class ConversationEngine:
     def _carry_out_action(self, decision: AgentDecision, session: ConversationSession) -> str:
         """Hand a validated task/reminder action to the executor (PermissionManager -> tool -> service).
         The reply says only what actually happened."""
-        assert self._actions is not None and decision.task_action is not None
-        outcome = self._actions.execute(decision.task_action, session.session_id)
+        action = decision.task_action or decision.gmail_action
+        assert self._actions is not None and action is not None
+        outcome = self._actions.execute(action, session.session_id)
         self._action_handled = True
+        self._history_override = outcome.history_text
         self.last_permission_requests = [outcome.permission_request] if outcome.permission_request else []
-        logger.info("Task action handled (action=%s, executed=%s)", decision.task_action.name.value, outcome.executed)
+        logger.info("Action handled (action=%s, executed=%s)", action.name.value, outcome.executed)
         return outcome.reply
 
     def _request_permissions(self, session_id: str) -> None:
