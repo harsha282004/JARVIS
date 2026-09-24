@@ -164,6 +164,12 @@ documents (only `RagService` from code/CLI). A poisoned document is therefore qu
 text that a fooled model could at worst repeat, not act on. It is a mitigation, not a
 guarantee against a model being persuaded in its wording.
 
+## Knowledge graph
+
+Since Phase 8 `RagService` emits document events (indexed, re-indexed, deleted) so graph facts
+derived from a document are invalidated when it is deleted or its content changes
+(`docs/knowledge-graph.md`). Graph extraction is explicit and separate from ingestion.
+
 ## Deletion and reindex
 
 `delete_document(id)` removes all chunks and vectors and marks the document `DELETED`

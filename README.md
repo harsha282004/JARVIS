@@ -3,9 +3,15 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 7 — Personal RAG
+## Current status: Phase 8 — Personal Knowledge Graph
 
-Phases 0-6 are complete. Phase 7 lets JARVIS index your own TXT, Markdown and
+Phases 0-7 are complete. Phase 8 adds a relational knowledge graph (entities, typed
+relationships, provenance, confidence and trust levels) derived from your personal memory and
+indexed documents, so JARVIS can answer relationship questions ("Which projects use Python?",
+"How is FastAPI related to JARVIS?"). Facts keep their sources, are invalidated when the memory or
+document they came from is removed, and graph content is untrusted data that cannot trigger tools.
+It does not replace memory or RAG. Run `alembic -c database/alembic.ini upgrade head`; inspect it with
+`python scripts/kg_cli.py`. Phase 7 lets JARVIS index your own TXT, Markdown and
 PDF documents locally (chunking, local SentenceTransformers embeddings, a
 PostgreSQL-backed vector store) and answer questions grounded in them, with
 source/page references and an honest "I couldn't find enough information" path when
@@ -38,10 +44,11 @@ the voice engine as a persistent Windows background app with a system-tray
 icon (status, pause/resume, restart, exit), graceful shutdown, sleep/resume
 recovery, and optional start-with-Windows. Phase 1 provides a functional local
 voice pipeline: say "Hey JARVIS", ask a question, get a spoken answer from
-a local LLM via Ollama. **No tool execution, memory, personal RAG,
-integrations (Gmail, Calendar, messaging, ...), installer/packaging, or
-frontend functionality is implemented yet**, and there is no
-persistent memory; conversation history is in memory only and is lost on exit.
+a local LLM via Ollama. **No tool execution, integrations (Gmail, Calendar,
+messaging, ...), tasks/reminders, installer/packaging, or frontend
+functionality is implemented yet.** Conversation history itself is in memory
+only and is lost on exit; durable knowledge lives in personal memory, RAG and
+the knowledge graph.
 
 See `docs/architecture.md` for full scope, `docs/voice-system.md` for the
 voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
@@ -49,7 +56,8 @@ voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/agent-brain.md` for the agent brain,
 `docs/security-and-permissions.md` for the permission layer,
 `docs/personal-memory.md` for personal memory,
-`docs/personal-rag.md` for personal RAG, and `docs/requirements.md` for what each
+`docs/personal-rag.md` for personal RAG,
+`docs/knowledge-graph.md` for the knowledge graph, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -68,15 +76,15 @@ phase does and does not cover.
 
 ```
 backend/        FastAPI application (API, core incl. LLM + conversation engine, models, services)
-agent/          brain + planner (decision/plan only), personal memory (implemented); tools (interface only); orchestrator (empty)
+agent/          brain + planner (decision/plan only), personal memory, RAG and knowledge graph (implemented); tools (interface only); orchestrator (empty)
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
 integrations/   External-service boundary: gmail, calendar, messaging, ... (interfaces only)
 desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) — implemented
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag docs
-scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py)
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph docs
+scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py, kg_cli.py)
 ```
 
 Every future component (LLM provider, tool, integration, memory backend,
@@ -132,6 +140,8 @@ lifecycle, startup integration, troubleshooting and limitations.
   detection yet).
 - Follow-up listening is a fixed window; no interruption (barge-in) handling.
 - Conversation context is in memory only, limited by message count.
+- Knowledge graph: memory mapping covers Phase 6's templated sentences; document extraction is
+  explicit (CLI) and only as good as the local LLM; not verified against PostgreSQL or a real Ollama.
 - RAG: TXT/Markdown/PDF only (no OCR, DOCX or hybrid search); exact vector search that
   scales linearly; first document question loads the embedding model (slow); verified
   here with real embeddings on SQLite, not on the development PostgreSQL or a real Ollama.
@@ -158,7 +168,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG. Later phases — tools, the approval UI, the knowledge graph,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph. Later phases — tools, the approval UI, tasks and reminders,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

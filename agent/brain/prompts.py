@@ -53,14 +53,18 @@ def _decision_instructions(documents_enabled: bool) -> str:
 
 
 def build_system_prompt(
-    tools: Sequence[ToolDescriptor], memory_context: str = "", documents_enabled: bool = False
+    tools: Sequence[ToolDescriptor], memory_context: str = "", documents_enabled: bool = False,
+    graph_context: str = "",
 ) -> str:
     prompt = (
         f"{SYSTEM_PROMPT}\n\n{_decision_instructions(documents_enabled)}"
         f"\nAVAILABLE TOOLS:\n{_describe_tools(tools)}"
     )
     # Memory goes last, inside its own delimiters, after every rule it must not override.
-    return f"{prompt}\n\n{memory_context}" if memory_context else prompt
+    for block in (memory_context, graph_context):
+        if block:
+            prompt = f"{prompt}\n\n{block}"
+    return prompt
 
 
 RETRY_PROMPT = (

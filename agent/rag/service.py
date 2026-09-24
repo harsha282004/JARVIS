@@ -32,6 +32,8 @@ from agent.rag.models import (
     CorruptDocument,
     Document,
     DocumentChunk,
+    DocumentEvent,
+    DocumentEventKind,
     DocumentStatus,
     EmbeddingError,
     IngestOutcome,
@@ -80,6 +82,18 @@ class RagService:
         self._chunker = chunker or Chunker()
         self._limits = limits or RagLimits()
         self._clock = clock
+        self._listeners: list[Callable[[DocumentEvent], None]] = []
+
+    def add_listener(self, listener: Callable[[DocumentEvent], None]) -> None:
+        """Be told when a document is indexed, re-indexed or deleted (keeps derived data consistent)."""
+        self._listeners.append(listener)
+
+    def _notify(self, kind: DocumentEventKind, document: Document) -> None:
+        for listener in self._listeners:
+            try:
+                listener(DocumentEvent(kind=kind, document=document))
+            except Exception as exc:  # noqa: BLE001 - a derived system must never break the RAG index
+                logger.warning("Document change listener failed (%s)", type(exc).__name__)
 
     # ---- ingestion -------------------------------------------------------
 
@@ -173,6 +187,7 @@ class RagService:
         outcome = IngestOutcome.REINDEXED if is_reindex else IngestOutcome.INDEXED
         logger.info("Document ingestion completed (id=%s, file=%s, chunks=%d, outcome=%s)",
                     indexed.document_id, resolved.name, len(items), outcome.value)
+        self._notify(DocumentEventKind.REINDEXED if is_reindex else DocumentEventKind.INDEXED, indexed)
         return IngestResult(outcome=outcome, document=indexed)
 
     def reindex_document(self, document_id: str) -> IngestResult:
@@ -191,7 +206,11 @@ class RagService:
             "status": DocumentStatus.DELETED, "chunk_count": 0, "updated_at": self._clock(),
         }))
         logger.info("Document deleted from the index (id=%s, file=%s)", document_id, doc.filename)
+        self._notify(DocumentEventKind.DELETED, doc)
         return True
+
+    def get_chunks(self, document_id: str) -> list[DocumentChunk]:
+        return self._store.get_chunks(document_id)
 
     def search(self, query: str):
         """Relevant chunks (with scores and sources) without generating an answer."""

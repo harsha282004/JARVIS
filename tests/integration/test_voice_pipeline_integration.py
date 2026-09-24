@@ -169,3 +169,23 @@ def test_real_embedding_model_retrieves_relevant_chunk_and_rejects_unrelated_que
 
     unrelated = rag.answer("What is the capital of France?")
     assert unrelated.status.value == "insufficient_context" and unrelated.sources == []
+
+
+@pytest.mark.integration
+def test_real_ollama_graph_extraction_produces_validated_facts():
+    """Real LLM extraction on the spec's example text. Nothing is written to any database here."""
+    settings = get_settings()
+    if not _ollama_reachable(settings.OLLAMA_BASE_URL):
+        pytest.skip(f"Ollama not reachable at {settings.OLLAMA_BASE_URL}")
+
+    from agent.knowledge_graph.extraction import GraphExtractor, SourceInfo
+    from agent.knowledge_graph.models import SourceKind
+    from backend.core.llm.ollama_provider import OllamaProvider
+
+    text = "JARVIS uses FastAPI and PostgreSQL.\nThe project is developed by the user."
+    extractor = GraphExtractor(OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model=settings.LLM_MODEL))
+    result = extractor.extract(text, SourceInfo(SourceKind.PERSONAL_DOCUMENT, "doc", "test.md", chunk_id="c1"))
+
+    names = {e.name.lower() for e in result.entities}
+    assert {"jarvis", "fastapi"} <= names  # reasonable entities, all grounded in the text by validation
+    assert all(f.provenance.source_name == "test.md" for f in result.facts)

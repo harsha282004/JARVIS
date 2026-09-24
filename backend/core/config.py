@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     JARVIS_RAG_MAX_DOCUMENT_SIZE_MB: int = Field(default=25, ge=1)
     JARVIS_RAG_MAX_CHUNKS_PER_DOCUMENT: int = Field(default=2000, ge=1)
 
+    # --- Personal knowledge graph (relational, in PostgreSQL) ---
+    JARVIS_KG_ENABLED: bool = True
+    JARVIS_KG_MAX_PATH_DEPTH: int = Field(default=3, ge=1, le=6)
+    JARVIS_KG_MAX_RESULTS: int = Field(default=20, ge=1, le=100)
+    # Relationships below this confidence are not stored by extraction nor shown to the LLM.
+    JARVIS_KG_MIN_CONFIDENCE: Literal["low", "medium", "high"] = "medium"
+
     # --- Permissions & security audit ---
     # How long a permission request stays valid. Unknown tools are always denied;
     # that is an invariant, not a setting.

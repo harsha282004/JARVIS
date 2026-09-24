@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 7** (personal RAG) on top of **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 8** (personal knowledge graph) on top of **Phase 7** (personal RAG), **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -36,6 +36,16 @@ introducing a second configuration or logging system. It does **not**
 implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
+
+## Phase 8 scope (personal knowledge graph)
+
+Phase 8 adds `agent/knowledge_graph/`: typed `Entity`/`Relationship`/`Provenance` models, a
+controlled relationship schema, deterministic canonicalization, `GraphService` (rules) over
+`GraphRepository` (PostgreSQL: `kg_entities`, `kg_relationships`, `kg_provenance`, migration `0003`),
+validated LLM extraction, listeners that keep memory- and document-derived facts consistent, and a
+`GraphContextProvider` that adds a delimited untrusted `<knowledge_graph_context>` block to prompts
+alongside memory and RAG context. It is separate from memory and RAG, never writes to them, and
+never bypasses `PermissionManager`. See `docs/knowledge-graph.md`.
 
 ## Phase 7 scope (personal RAG)
 
@@ -117,6 +127,7 @@ JARVIS/
 │   ├── planner/          Plan models + deterministic Planner (Phase 4; describes, never runs)
 │   ├── memory/           personal memory: interface, service, repository, extraction, safety (Phase 6)
 │   ├── rag/              personal RAG: loaders, chunker, embeddings, vector store, retriever, service (Phase 7)
+│   ├── knowledge_graph/  entities/relationships/provenance, GraphService, extraction, sync, context (Phase 8)
 │   ├── tools/            Tool interface + ToolDescriptor (no concrete tools yet)
 │   └── orchestrator/     will drive plans through PermissionManager + tools (empty; not built)
 │
@@ -166,7 +177,7 @@ never calls a Tool directly.** See `docs/security.md`.
 | Backend       | Python, FastAPI, WebSockets          | FastAPI app + `/health` only; no WebSocket endpoint yet |
 | Agent         | Custom brain/planner (LangGraph/LangChain not used) | AgentBrain + Planner implemented (Phase 4, decisions only); no tools, no execution |
 | LLM           | Ollama/local first, provider abstraction | `LLMProvider` (chat, json_mode hint) + `OllamaProvider` implemented |
-| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; `personal_memories` (Phase 6), `rag_documents`, `rag_chunks` (Phase 7) |
+| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; `personal_memories` (Phase 6), `rag_documents`, `rag_chunks` (Phase 7), `kg_entities`, `kg_relationships`, `kg_provenance` (Phase 8) |
 | Vector storage| pgvector or similar                  | PostgreSQL tables + exact NumPy cosine search (Phase 7; pgvector deliberately not required) |
 | Embeddings    | SentenceTransformers                 | Implemented (Phase 7, local, all-MiniLM-L6-v2) |
 | Voice         | wake-word engine, Whisper/Faster-Whisper, TTS | Implemented: openWakeWord, Faster-Whisper, Piper (see docs/voice-system.md) |
@@ -199,6 +210,11 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 8 intentionally does not implement
+
+A graph database, graph visualization/UI, automatic extraction on every ingest or turn, temporal
+reasoning beyond valid-from/until, negative relationships, and everything in the Phase 7 list below.
 
 ## What Phase 7 intentionally does not implement
 

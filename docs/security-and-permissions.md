@@ -180,6 +180,12 @@ Retrieved document text is untrusted data in a delimited block (`docs/personal-r
 It is never given to the agent's decision call, the document-answer path has no tools, and
 it cannot ingest/delete documents, write memory, approve requests or alter policy.
 
+## Knowledge graph and this boundary (Phase 8)
+
+Graph facts are untrusted data in a delimited block (`docs/knowledge-graph.md`). Model output
+never writes to the graph directly (validated typed facts through `GraphService` only), the agent
+holds no graph reference, and graph content cannot approve requests, run tools or alter policy.
+
 ## Configuration
 
 | Setting | Default |

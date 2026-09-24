@@ -84,6 +84,39 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 8 — Personal Knowledge Graph
+
+### Functional requirements
+
+- Typed entities (PERSON, PROJECT, TECHNOLOGY, ORGANIZATION, DOCUMENT, SKILL, GOAL, LOCATION,
+  TOPIC) and relationships from a controlled vocabulary with allowed type combinations, stored
+  relationally (`kg_entities`, `kg_relationships`, `kg_provenance`, foreign keys, Alembic migration).
+- Deterministic canonicalization and deduplication of entities; one relationship per
+  (source, type, target) with multiple provenance rows; no aggressive or semantic merging.
+- Provenance (memory id; document id, name, page, chunk), confidence (LOW/MEDIUM/HIGH) and trust
+  (INFERRED / VERIFIED_SOURCE / EXPLICIT_USER); inferred facts never override higher-trust ones.
+- Memory to graph and document to graph integration; deleting/superseding a memory or
+  deleting/re-indexing a document invalidates the facts that depended on it alone.
+- Structured, validated LLM extraction; unknown types, hallucinated entities and malformed output are
+  rejected and nothing is partially written.
+- Queries: entity lookup, related entities with type filters, provenance, bounded path search with
+  cycle protection; relevant facts given to the LLM as a delimited untrusted block.
+- Conflicts preserve history and provenance; `valid_from`/`valid_until`/status distinguish current
+  from historical facts.
+- `JARVIS_KG_ENABLED`, `JARVIS_KG_MAX_PATH_DEPTH`, `JARVIS_KG_MAX_RESULTS`, `JARVIS_KG_MIN_CONFIDENCE`.
+
+### Non-functional requirements
+
+- Graph content is untrusted data: it cannot execute tools, change permissions, policy or prompts'
+  rules; all mutations go through `GraphService`; no SQL from model output.
+- Local only; no document text in logs; graph failures never break the conversation or invent facts.
+- No new dependencies; the graph does not replace or write to memory or RAG.
+
+### Explicitly out of scope for Phase 8
+
+A graph database, visualization/UI, tasks/reminders, calendar/email/messaging graphs, automatic
+extraction on every ingest or turn, and everything out of scope earlier.
+
 ## Phase 7 — Personal RAG
 
 ### Functional requirements

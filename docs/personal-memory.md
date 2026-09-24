@@ -182,6 +182,12 @@ warning is logged, and after a failure the database is skipped for 30 s so
 turns are not slowed. Extraction failure: nothing saved, conversation kept.
 Update/delete/store failures raise; nothing claims success.
 
+## Knowledge graph
+
+Memory is the authority for structured memories. Since Phase 8 `MemoryService` emits change events
+so the knowledge graph can derive and invalidate relationships (`docs/knowledge-graph.md`); the graph
+never writes to memory, and a failing listener never breaks memory.
+
 ## Setup
 
 ```powershell

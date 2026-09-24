@@ -104,3 +104,33 @@ def test_rag_postgresql_sql_needs_no_extension():
     sql = out.getvalue()
     assert "CREATE TABLE rag_documents" in sql and "CREATE TABLE rag_chunks" in sql and "BYTEA" in sql
     assert "CREATE EXTENSION" not in sql and "vector" not in sql.lower()
+
+
+def test_knowledge_graph_tables_migration_and_foreign_keys(tmp_path):
+    from backend.models.knowledge_graph import KgEntity, KgProvenance, KgRelationship
+
+    url = f"sqlite:///{tmp_path / 'kg.db'}"
+    command.upgrade(alembic_config(url), "head")
+    engine = create_engine(url)
+    inspector = inspect(engine)
+    for model in (KgEntity, KgRelationship, KgProvenance):
+        assert {c["name"] for c in inspector.get_columns(model.__tablename__)} == {c.name for c in model.__table__.columns}
+    fks = {(fk["referred_table"], tuple(fk["constrained_columns"])) for fk in inspector.get_foreign_keys("kg_relationships")}
+    assert fks == {("kg_entities", ("source_entity_id",)), ("kg_entities", ("target_entity_id",))}
+    assert [fk["referred_table"] for fk in inspector.get_foreign_keys("kg_provenance")] == ["kg_relationships"]
+    engine.dispose()
+
+    command.downgrade(alembic_config(url), "0002_rag_tables")
+    engine = create_engine(url)
+    tables = set(inspect(engine).get_table_names())
+    assert not tables & {"kg_entities", "kg_relationships", "kg_provenance"} and "rag_documents" in tables
+    engine.dispose()
+
+
+def test_knowledge_graph_postgresql_sql_has_foreign_keys_and_no_extension():
+    out = io.StringIO()
+    command.upgrade(alembic_config("postgresql+psycopg2://u:p@localhost/x", out), "head", sql=True)
+    sql = out.getvalue()
+    assert "CREATE TABLE kg_entities" in sql and "CREATE TABLE kg_relationships" in sql and "CREATE TABLE kg_provenance" in sql
+    assert sql.count("FOREIGN KEY(source_entity_id) REFERENCES kg_entities (id) ON DELETE CASCADE") == 1
+    assert "CREATE EXTENSION" not in sql

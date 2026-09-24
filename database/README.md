@@ -42,6 +42,9 @@ logs the underlying error.
 - `rag_documents`, `rag_chunks` (Phase 7): personal RAG document metadata and chunk vectors
   (embeddings stored as float32 bytes; no PostgreSQL extension needed). Migration `0002_rag_tables`.
 
+- `kg_entities`, `kg_relationships`, `kg_provenance` (Phase 8): personal knowledge graph with foreign
+  keys. Migration `0003_knowledge_graph`.
+
 ## Migrations
 
 Once real models exist, generate and apply migrations with:

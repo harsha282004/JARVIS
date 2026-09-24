@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from agent.brain.brain import AgentBrain
 from agent.brain.models import AgentDecision, Intent
 from agent.brain.permissions import request_permissions
+from agent.knowledge_graph.context import GraphContextProvider, build_graph_block
 from agent.memory.context import build_memory_block
 from agent.memory.service import MemoryService
 from agent.rag.grounding import RAG_DISABLED_RESPONSE
@@ -47,6 +48,7 @@ class ConversationEngine:
         permissions: PermissionManager | None = None,
         memory: MemoryService | None = None,
         rag: RagService | None = None,
+        graph: GraphContextProvider | None = None,
     ):
         if max_messages < MIN_MAX_MESSAGES:
             raise ValueError(f"max_messages must be at least {MIN_MAX_MESSAGES}")
@@ -59,6 +61,7 @@ class ConversationEngine:
         self._permissions = permissions
         self._memory = memory
         self._rag = rag
+        self._graph = graph
         self._session: ConversationSession | None = None
         self.last_decision: AgentDecision | None = None
         self.last_permission_requests: list[PermissionRequest] = []
@@ -94,7 +97,8 @@ class ConversationEngine:
 
         self.last_rag_answer = None
         memory_block = self._memory_block(text)
-        reply = self._generate_reply(session, user_message, memory_block)
+        graph_block = self._graph_block(text)
+        reply = self._generate_reply(session, user_message, memory_block, graph_block)
 
         if is_new:
             self._session = session
@@ -135,6 +139,17 @@ class ConversationEngine:
         )
         return answer.answer
 
+    def _graph_block(self, text: str) -> str:
+        """Relevant knowledge-graph facts as a delimited block. A graph failure means no graph
+        context (never invented facts) and the turn continues."""
+        if self._graph is None:
+            return ""
+        try:
+            return build_graph_block(self._graph.context_for(text))
+        except Exception as exc:  # noqa: BLE001 - the graph is optional; log the type only
+            logger.warning("Graph retrieval failed; continuing without graph context (%s)", type(exc).__name__)
+            return ""
+
     def _memory_block(self, text: str) -> str:
         """Relevant stored memories as a delimited block. Any memory failure means
         no memory context (never invented memories) and the turn continues."""
@@ -158,18 +173,20 @@ class ConversationEngine:
             logger.warning("Memory extraction/storage failed; nothing saved (%s)", type(exc).__name__)
 
     def _generate_reply(
-        self, session: ConversationSession, user_message: Message, memory_block: str = ""
+        self, session: ConversationSession, user_message: Message, memory_block: str = "", graph_block: str = ""
     ) -> str:
-        context = self._build_context(session, user_message, memory_block)
+        context = self._build_context(session, user_message, "\n\n".join(b for b in (memory_block, graph_block) if b))
         if self._agent is None:
             return self._llm.chat(context)
         # context = [system prompt, *history, current user message]; the brain
         # has its own prompt, so it gets the history and the message separately.
-        request = self._agent.build_request(user_message.content, context[1:-1], memory_block)
+        request = self._agent.build_request(user_message.content, context[1:-1], memory_block, graph_block)
         decision = self._agent.decide(request)
         self.last_decision = decision
         if decision.intent is Intent.DOCUMENT_QUESTION:
-            return self._answer_from_documents(decision, user_message, context[1:-1], memory_block)
+            return self._answer_from_documents(
+                decision, user_message, context[1:-1], "\n\n".join(b for b in (memory_block, graph_block) if b)
+            )
         return decision.response
 
     def _request_permissions(self, session_id: str) -> None:

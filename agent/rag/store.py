@@ -12,6 +12,7 @@ embedding models are never compared.
 """
 
 import heapq
+from datetime import timezone
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -52,6 +53,11 @@ class VectorStore(ABC):
 
     @abstractmethod
     def search(self, query_vector: np.ndarray, model_name: str, top_k: int, min_score: float) -> list[RetrievalResult]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_chunks(self, document_id: str) -> list[DocumentChunk]:
+        """A document's chunks in order (text and metadata only, never vectors)."""
         raise NotImplementedError
 
     @abstractmethod
@@ -99,6 +105,15 @@ class SqlVectorStore(VectorStore):
 
     def delete_document(self, document_id: str) -> int:
         return int(self._run(lambda s: s.execute(delete(RagChunk).where(RagChunk.document_id == document_id)).rowcount or 0))
+
+    def get_chunks(self, document_id: str) -> list[DocumentChunk]:
+        stmt = select(RagChunk).where(RagChunk.document_id == document_id).order_by(RagChunk.chunk_index)
+        return self._run(lambda s: [
+            DocumentChunk(chunk_id=c.id, document_id=c.document_id, chunk_index=c.chunk_index, text=c.text,
+                          page=c.page, metadata=c.extra or {}, embedding_model=c.embedding_model,
+                          created_at=c.created_at if c.created_at.tzinfo else c.created_at.replace(tzinfo=timezone.utc))
+            for c in s.scalars(stmt)
+        ])
 
     def count(self, model_name: str | None = None) -> int:
         stmt = select(func.count()).select_from(RagChunk)

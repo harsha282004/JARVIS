@@ -129,6 +129,21 @@ class StoreResult(BaseModel):
     reason: str = ""
 
 
+class MemoryEventKind(StrEnum):
+    STORED = "stored"
+    UPDATED = "updated"
+    DELETED = "deleted"
+    SUPERSEDED = "superseded"
+    PURGED = "purged"
+
+
+class MemoryEvent(BaseModel):
+    """Emitted after a committed change so derived systems (the knowledge graph) can stay consistent."""
+
+    kind: MemoryEventKind
+    memory: Memory
+
+
 class PendingMemory(BaseModel):
     """A candidate waiting for the user's confirmation. Held in memory only."""
 

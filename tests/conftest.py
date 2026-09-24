@@ -23,10 +23,11 @@ get_settings.cache_clear()
 # *disposable* PostgreSQL database to run the same tests there as well.
 
 import pytest  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+import backend.models.knowledge_graph  # noqa: E402,F401
 import backend.models.memory  # noqa: E402,F401
 from backend.models.base import Base  # noqa: E402
 
@@ -35,6 +36,7 @@ from backend.models.base import Base  # noqa: E402
 def memory_engine(request):
     if request.param == "sqlite":
         engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+        event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))  # enforce FKs like PostgreSQL
     else:
         url = os.environ.get("JARVIS_TEST_DATABASE_URL")
         if not url:

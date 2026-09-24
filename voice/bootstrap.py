@@ -6,6 +6,10 @@ today only one concrete implementation exists per interface.
 """
 
 from agent.brain.brain import AgentBrain
+from agent.knowledge_graph.context import GraphContextProvider
+from agent.knowledge_graph.repository import GraphRepository
+from agent.knowledge_graph.service import GraphService
+from agent.knowledge_graph.sync import DocumentGraphSync, MemoryGraphSync
 from agent.memory.models import Confidence
 from agent.rag.chunker import Chunker
 from agent.rag.documents import DocumentRepository
@@ -98,6 +102,17 @@ def build_rag_service(settings: Settings, llm: LLMProvider) -> RagService | None
     )
 
 
+def build_graph_service(settings: Settings) -> GraphService | None:
+    if not settings.JARVIS_KG_ENABLED:
+        return None
+    return GraphService(
+        GraphRepository(SessionLocal),
+        min_confidence=Confidence[settings.JARVIS_KG_MIN_CONFIDENCE.upper()],
+        max_path_depth=settings.JARVIS_KG_MAX_PATH_DEPTH,
+        max_results=settings.JARVIS_KG_MAX_RESULTS,
+    )
+
+
 def _build_conversation(settings: Settings) -> ConversationEngine:
     llm = _build_llm(settings)
     # No tools exist yet, so the brain is given an empty tool catalog.
@@ -111,13 +126,23 @@ def _build_conversation(settings: Settings) -> ConversationEngine:
         if settings.JARVIS_AGENT_ENABLED
         else None
     )
+    memory = _build_memory(settings)
+    rag = build_rag_service(settings, llm)
+    graph = build_graph_service(settings)
+    if graph is not None:
+        # Keep derived graph facts consistent with memory and the document index.
+        if memory is not None:
+            memory.add_listener(MemoryGraphSync(graph).handle)
+        if rag is not None:
+            rag.add_listener(DocumentGraphSync(graph).handle)
     return ConversationEngine(
         llm=llm,
         max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
         timeout_seconds=settings.JARVIS_CONVERSATION_TIMEOUT_SECONDS,
         agent=agent,
-        memory=_build_memory(settings),
-        rag=build_rag_service(settings, llm),
+        memory=memory,
+        rag=rag,
+        graph=GraphContextProvider(graph) if graph is not None else None,
         permissions=PermissionManager(
             tools=[],  # no tools exist yet, so every requested tool is denied as unknown
             audit=AuditLog(enabled=settings.JARVIS_PERMISSION_AUDIT_ENABLED),

@@ -35,6 +35,8 @@ class AgentRequest(BaseModel):
     tools: list[ToolDescriptor] = Field(default_factory=list)
     # Delimited, sanitized personal-memory block (agent.memory.context); untrusted data.
     memory_context: str = ""
+    # Delimited, sanitized knowledge-graph block (agent.knowledge_graph.context); untrusted data.
+    graph_context: str = ""
     # True when personal-document search is available (Phase 7); only then is document_question offered.
     documents_enabled: bool = False
 

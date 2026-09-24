@@ -122,6 +122,17 @@ class RAGAnswer(BaseModel):
         return list(dict.fromkeys(s.citation for s in self.sources))
 
 
+class DocumentEventKind(StrEnum):
+    INDEXED = "indexed"
+    REINDEXED = "reindexed"  # content changed: facts derived from the old content are stale
+    DELETED = "deleted"
+
+
+class DocumentEvent(BaseModel):
+    kind: DocumentEventKind
+    document: Document
+
+
 class IngestOutcome(StrEnum):
     INDEXED = "indexed"
     REINDEXED = "reindexed"

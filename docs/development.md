@@ -53,6 +53,13 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Knowledge graph (Phase 8)
+
+See `docs/knowledge-graph.md`. Apply the schema with `alembic -c database/alembic.ini upgrade head`.
+Inspect with `python scripts/kg_cli.py stats|entities|related|path|context`; rebuild memory-derived
+facts with `sync-memory`; extract from an indexed document with `extract-doc <id>` (needs Ollama).
+Tests use fake LLMs and an isolated SQLite database with foreign keys enforced.
+
 ## Personal RAG (Phase 7)
 
 See `docs/personal-rag.md`. Apply the schema with `alembic -c database/alembic.ini upgrade head`,

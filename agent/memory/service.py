@@ -26,6 +26,8 @@ from agent.memory.models import (
     Memory,
     MemoryBasis,
     MemoryCandidate,
+    MemoryEvent,
+    MemoryEventKind,
     MemoryNotFound,
     MemoryRejected,
     MemorySource,
@@ -72,6 +74,25 @@ class MemoryService(MemoryInterface):
         self._backoff = timedelta(seconds=backoff_seconds)
         self._retry_after: datetime | None = None
         self._pending: dict[str, PendingMemory] = {}
+        self._listeners: list[Callable[[MemoryEvent], None]] = []
+        self._events: list[MemoryEvent] = []
+
+    def add_listener(self, listener: Callable[[MemoryEvent], None]) -> None:
+        """Be told about committed changes (used to keep derived data, e.g. the graph, consistent)."""
+        self._listeners.append(listener)
+
+    def _emit(self, kind: MemoryEventKind, memory: Memory) -> None:
+        if self._listeners:
+            self._events.append(MemoryEvent(kind=kind, memory=memory))
+
+    def _flush_events(self) -> None:
+        events, self._events = self._events, []
+        for event in events:
+            for listener in self._listeners:
+                try:
+                    listener(event)
+                except Exception as exc:  # noqa: BLE001 - a derived system must never break memory
+                    logger.warning("Memory change listener failed (%s)", type(exc).__name__)
 
     # ---- storage guard -----------------------------------------------
 
@@ -96,7 +117,9 @@ class MemoryService(MemoryInterface):
         if screen(f"{candidate.content} {candidate.slot or ''}").secret:
             logger.warning("Memory rejected by safety screening (type=%s)", candidate.type.value)
             raise MemoryRejected("Content looks like a secret and will not be stored")
-        return self._db(lambda: self._store(candidate))
+        result = self._db(lambda: self._store(candidate))
+        self._flush_events()
+        return result
 
     def retrieve(self, query: str, limit: int | None = None) -> list[Memory]:
         """Active memories relevant to `query`, best first; marks them as accessed."""
@@ -127,6 +150,8 @@ class MemoryService(MemoryInterface):
         if screen(edited.content).secret:
             raise MemoryRejected("Content looks like a secret and will not be stored")
         self._db(lambda: self._save_or_raise(edited))
+        self._emit(MemoryEventKind.UPDATED, edited)
+        self._flush_events()
         logger.info("Memory updated (id=%s, type=%s)", memory_id, edited.type.value)
         return edited
 
@@ -137,6 +162,8 @@ class MemoryService(MemoryInterface):
             return False
         deleted = memory.model_copy(update={"status": MemoryStatus.DELETED, "updated_at": self._clock()})
         self._db(lambda: self._save_or_raise(deleted))
+        self._emit(MemoryEventKind.DELETED, deleted)
+        self._flush_events()
         logger.info("Memory deleted (id=%s, type=%s)", memory_id, memory.type.value)
         return True
 
@@ -177,15 +204,21 @@ class MemoryService(MemoryInterface):
             new = self._new_memory(candidate)
             self._repo.add(new)
             self._supersede(old, new.memory_id)
+            self._emit(MemoryEventKind.STORED, new)
             return new
 
         new = self._db(work)
+        self._flush_events()
         logger.info("Memory corrected (old=%s, new=%s)", memory_id, new.memory_id)
         return new
 
     def purge(self, memory_id: str) -> bool:
         """Physically erase a memory row (privacy erase)."""
+        existing = self._db(lambda: self._repo.get(self._valid_id(memory_id)))
         removed = self._db(lambda: self._repo.purge(self._valid_id(memory_id)))
+        if removed and existing is not None:
+            self._emit(MemoryEventKind.PURGED, existing)
+            self._flush_events()
         if removed:
             logger.info("Memory purged (id=%s)", memory_id)
         return removed
@@ -260,9 +293,9 @@ class MemoryService(MemoryInterface):
             raise MemoryNotFound("Memory no longer exists")
 
     def _supersede(self, old: Memory, new_id: str) -> None:
-        self._repo.save(
-            old.model_copy(update={"status": MemoryStatus.SUPERSEDED, "superseded_by": new_id, "updated_at": self._clock()})
-        )
+        superseded = old.model_copy(update={"status": MemoryStatus.SUPERSEDED, "superseded_by": new_id, "updated_at": self._clock()})
+        self._repo.save(superseded)
+        self._emit(MemoryEventKind.SUPERSEDED, superseded)
 
     def _store(self, candidate: MemoryCandidate) -> StoreResult:
         norm = normalize_content(candidate.content)
@@ -277,6 +310,7 @@ class MemoryService(MemoryInterface):
                     }
                 )
                 self._repo.save(upgraded)
+                self._emit(MemoryEventKind.UPDATED, upgraded)
                 return StoreResult(outcome=StoreOutcome.DUPLICATE, memory=upgraded, reason="upgraded_to_explicit")
             return StoreResult(outcome=StoreOutcome.DUPLICATE, memory=existing, reason="identical_active_memory")
 
@@ -288,6 +322,7 @@ class MemoryService(MemoryInterface):
         self._repo.add(memory)
         for old in conflicts:
             self._supersede(old, memory.memory_id)
+        self._emit(MemoryEventKind.STORED, memory)
         logger.info("Memory stored (id=%s, type=%s, superseded=%d)", memory.memory_id, memory.type.value, len(conflicts))
         if conflicts:
             return StoreResult(
