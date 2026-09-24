@@ -37,6 +37,14 @@ to Phase 1 code is two small lifecycle hooks: `VoiceEngine.run_once(should_stop=
 promptly) and `VoiceEngine.microphone_active`; plus an optional `log_file`
 for `configure_logging` (a windowless process has no console).
 
+## Reminder scheduler (Phase 9)
+
+`JarvisApplication` also owns an optional `ReminderScheduler`: it is started after the tray and before the voice
+engine, and stopped first at shutdown. It runs on its own thread, independent of the RuntimeManager and the voice
+engine (pausing the microphone does not pause reminders), and a failure to start it is logged without stopping
+JARVIS. Reminders are shown through `TrayController.notify` and spoken by the VoiceEngine between conversations.
+See `docs/tasks-and-reminders.md`.
+
 ## Lifecycle
 
 `RuntimeState` (application lifecycle) is separate from `VoiceState`

@@ -45,6 +45,10 @@ logs the underlying error.
 - `kg_entities`, `kg_relationships`, `kg_provenance` (Phase 8): personal knowledge graph with foreign
   keys. Migration `0003_knowledge_graph`.
 
+- `tasks`, `reminders` (Phase 9): tasks and scheduled reminders; `reminders.task_id` is a foreign key to
+  `tasks.id` with `ON DELETE CASCADE`. All timestamps are timezone-aware and stored as UTC. Migration
+  `0004_tasks_reminders`.
+
 ## Migrations
 
 Once real models exist, generate and apply migrations with:

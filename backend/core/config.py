@@ -7,8 +7,9 @@ setting is missing, startup fails with a clear error instead of guessing.
 
 from functools import lru_cache
 from typing import Literal
+from zoneinfo import ZoneInfo
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -110,6 +111,21 @@ class Settings(BaseSettings):
     # Relationships below this confidence are not stored by extraction nor shown to the LLM.
     JARVIS_KG_MIN_CONFIDENCE: Literal["low", "medium", "high"] = "medium"
 
+    # --- Tasks and reminders (local PostgreSQL; run the Alembic migration once) ---
+    JARVIS_TASKS_ENABLED: bool = True
+    JARVIS_REMINDERS_ENABLED: bool = True
+    # IANA timezone name for parsing and showing times ("Asia/Kolkata"). Empty = detect this computer's
+    # timezone once at startup. The database always stores UTC.
+    JARVIS_TIMEZONE: str = ""
+    # How often the scheduler looks for due reminders.
+    JARVIS_REMINDER_POLL_SECONDS: float = Field(default=15.0, ge=1.0, le=3600.0)
+    # A reminder that came due while JARVIS was not running: "notify" delivers it late, marked as missed;
+    # "expire" does not deliver it.
+    JARVIS_MISSED_REMINDER_POLICY: Literal["notify", "expire"] = "notify"
+    JARVIS_DEFAULT_TASK_PRIORITY: Literal["low", "medium", "high", "critical"] = "medium"
+    JARVIS_REMINDER_DESKTOP_NOTIFICATIONS: bool = True
+    JARVIS_REMINDER_VOICE_NOTIFICATIONS: bool = True
+
     # --- Permissions & security audit ---
     # How long a permission request stays valid. Unknown tools are always denied;
     # that is an invariant, not a setting.
@@ -123,6 +139,17 @@ class Settings(BaseSettings):
     JARVIS_RUNTIME_ENABLED: bool = True
     # false = run without a tray icon (headless; stop with Ctrl+C).
     JARVIS_TRAY_ENABLED: bool = True
+
+    @field_validator("JARVIS_TIMEZONE")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        value = value.strip()
+        if value:
+            try:
+                ZoneInfo(value)
+            except Exception:  # noqa: BLE001 - unknown key, bad format or missing tz database
+                raise ValueError("JARVIS_TIMEZONE must be an IANA timezone name such as 'Europe/London'") from None
+        return value
 
 
 @lru_cache

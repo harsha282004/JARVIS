@@ -9,6 +9,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field, model_validator
 
 from agent.planner.models import Plan
+from agent.tasks.intents import TaskAction
 from agent.tools.base import ToolDescriptor
 from backend.core.llm.messages import Message
 from backend.core.security import PermissionRequest
@@ -73,6 +74,9 @@ class AgentDecision(BaseModel):
     error: AgentError | None = None
     # Standalone search query for a document_question (resolves pronouns from the conversation).
     search_query: str | None = None
+    # A validated task/reminder action the model proposed (Phase 9). Data only: ConversationEngine hands it
+    # to the executor, which goes through the PermissionManager. The brain never executes it.
+    task_action: TaskAction | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "AgentDecision":
@@ -83,6 +87,8 @@ class AgentDecision(BaseModel):
             raise ValueError("only action_request decisions may carry a plan, tools or permission needs")
         if self.search_query is not None and self.intent is not Intent.DOCUMENT_QUESTION:
             raise ValueError("only document_question decisions may carry a search query")
+        if self.task_action is not None and not is_action:
+            raise ValueError("only action_request decisions may carry a task action")
         return self
 
     @property

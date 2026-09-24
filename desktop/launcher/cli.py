@@ -22,7 +22,7 @@ from desktop.launcher.startup import PROJECT_ROOT, StartupIntegrationError, Star
 from desktop.runtime.manager import RuntimeManager
 from desktop.runtime.power import SleepResumeWatcher
 from desktop.tray.tray import TrayController
-from voice.bootstrap import build_voice_engine
+from voice.bootstrap import build_reminder_scheduler, build_task_system, build_voice_engine
 
 LOG_FILE = PROJECT_ROOT / "logs" / "jarvis.log"
 
@@ -51,10 +51,12 @@ def _run_startup_command(args: argparse.Namespace, startup: StartupManager) -> i
 
 
 def _build_application(settings: Settings, exit_event: threading.Event) -> JarvisApplication:
-    manager = RuntimeManager(lambda: build_voice_engine(settings))
+    task_system = build_task_system(settings)
+    manager = RuntimeManager(lambda: build_voice_engine(settings, task_system))
     tray = TrayController(manager, exit_event.set) if settings.JARVIS_TRAY_ENABLED else None
     power = SleepResumeWatcher(manager.handle_system_resume)
-    return JarvisApplication(manager, exit_event, tray=tray, power=power)
+    scheduler = build_reminder_scheduler(settings, task_system, tray.notify if tray is not None else None)
+    return JarvisApplication(manager, exit_event, tray=tray, power=power, scheduler=scheduler)
 
 
 def main(argv: list[str] | None = None) -> int:

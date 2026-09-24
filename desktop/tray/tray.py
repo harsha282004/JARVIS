@@ -76,6 +76,16 @@ class TrayController:
         self._manager.add_listener(self._on_status)
         logger.info("Tray initialized")
 
+    def notify(self, title: str, message: str) -> None:
+        """Show a Windows notification balloon from the tray icon. Raises TrayError if there is no tray."""
+        icon = self._icon
+        if icon is None:
+            raise TrayError("The system tray icon is not running")
+        try:
+            icon.notify(message, title)
+        except Exception as exc:  # noqa: BLE001 - pystray backends raise assorted platform errors
+            raise TrayError(f"Could not show the notification ({type(exc).__name__})") from None
+
     def stop(self) -> None:
         icon, self._icon = self._icon, None
         if icon is not None:

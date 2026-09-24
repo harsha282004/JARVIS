@@ -84,6 +84,41 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 9 — Task & Reminder Engine
+
+### Functional requirements
+
+- Persistent `Task` and `Reminder` models (PostgreSQL, Alembic migration `0004`) with typed statuses
+  (task: PENDING, IN_PROGRESS, COMPLETED, CANCELLED, OVERDUE; reminder: SCHEDULED, TRIGGERED, CANCELLED,
+  EXPIRED) and priorities (LOW..CRITICAL); tasks and reminders are separate, a reminder may reference a task.
+- `TaskService`/`ReminderService`: create, get, list, update, complete, cancel, reopen (explicit), delete
+  (code only), due lookup; validated state transitions; transactional task-plus-reminder creation.
+- Natural-language times (tomorrow at 9 AM, in 30 minutes, today at 6 PM, next Monday at 8 AM) as explicit
+  timezone-aware datetimes in `JARVIS_TIMEZONE`; UTC storage.
+- Structured daily, weekly and monthly recurrence as one row that advances; cancelling stops it.
+- A `ReminderScheduler` thread integrated with the Windows runtime; duplicate-trigger protection; a
+  documented missed-reminder policy; clean start and stop.
+- A `NotificationService` abstraction with a local desktop (tray) notification and a spoken announcement
+  through the VoiceEngine.
+- AgentBrain emits a validated structured task/reminder action; execution goes
+  PermissionManager -> Tool -> service -> database. Ambiguous targets are clarified, never guessed.
+- Task/reminder queries (today, overdue, upcoming, incomplete, next reminder) with a documented sort order.
+- `JARVIS_TASKS_ENABLED`, `JARVIS_REMINDERS_ENABLED`, `JARVIS_TIMEZONE`, `JARVIS_REMINDER_POLL_SECONDS`,
+  `JARVIS_MISSED_REMINDER_POLICY`, `JARVIS_DEFAULT_TASK_PRIORITY` (and two channel switches).
+
+### Non-functional requirements
+
+- Local only; no cloud task service, external messaging or analytics; logs carry ids and statuses, never
+  task or reminder text.
+- The database being down never breaks JARVIS and never produces a false "created"; the scheduler recovers.
+- The model cannot supply ids or SQL; every mutation passes the PermissionManager; unknown tools stay denied.
+- New dependencies: `dateparser`, `tzdata` (timezone database for Windows), `tzlocal`.
+
+### Explicitly out of scope for Phase 9
+
+Calendar, Gmail, WhatsApp/external messaging, proactive intelligence, daily briefing, browser or desktop
+automation, remote JARVIS, a dashboard, notification preferences, and everything out of scope earlier.
+
 ## Phase 8 — Personal Knowledge Graph
 
 ### Functional requirements

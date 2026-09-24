@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 import json
 
+from agent.tasks.intents import TASK_ACTION_NAMES
 from agent.tools.base import ToolDescriptor
 from backend.core.conversation.prompts import SYSTEM_PROMPT
 
@@ -23,6 +24,14 @@ Rules:
 - You cannot execute anything. Never say or imply that an action was done. Never output code or commands.
 - Use the earlier conversation to resolve pronouns and follow-ups. Never invent missing details (recipients, times, contents); use clarification_required instead.
 - confidence is a number from 0 to 1. summary is one short sentence describing the request (no step-by-step reasoning).
+"""
+
+
+_TASK_ACTION_INSTRUCTIONS = """Task and reminder actions: when the user asks you to create a task or reminder, list tasks or reminders, complete a task, or cancel a task or reminder, use intent action_request and ALSO add to the JSON object: "action": {"name": "<tool name>", "arguments": {...}}, using the argument names from that tool's input schema.
+- Copy times exactly as the user said them ("tomorrow at 9 AM", "in 30 minutes", "every Monday at 8 AM"). Never convert them to dates and never compute a time yourself.
+- Never invent ids. To complete or cancel something, describe it in words in "query".
+- If the title, the time or the item is missing or unclear, use clarification_required and ask, instead of guessing.
+- The action is only a request that the system checks and carries out. Never say it has been done.
 """
 
 
@@ -60,6 +69,8 @@ def build_system_prompt(
         f"{SYSTEM_PROMPT}\n\n{_decision_instructions(documents_enabled)}"
         f"\nAVAILABLE TOOLS:\n{_describe_tools(tools)}"
     )
+    if any(tool.name in TASK_ACTION_NAMES for tool in tools):
+        prompt = f"{prompt}\n\n{_TASK_ACTION_INSTRUCTIONS}"
     # Memory goes last, inside its own delimiters, after every rule it must not override.
     for block in (memory_context, graph_context):
         if block:

@@ -5,6 +5,9 @@ authorization layer. It builds the security boundary **before** any tool
 exists: there are still no real tools, and Phase 5 executes nothing and has no
 external side effects.
 
+> **Since Phase 9** the first concrete tools exist (local task and reminder tools); see "Task and reminder tools
+> and this boundary (Phase 9)" below. Everything else is unchanged.
+
 ## Threat model
 
 What we defend against, and what we do not:
@@ -186,6 +189,17 @@ Graph facts are untrusted data in a delimited block (`docs/knowledge-graph.md`).
 never writes to the graph directly (validated typed facts through `GraphService` only), the agent
 holds no graph reference, and graph content cannot approve requests, run tools or alter policy.
 
+## Task and reminder tools and this boundary (Phase 9)
+
+The first concrete tools are local: `create_task`, `create_reminder`, `list_tasks`, `list_reminders`,
+`complete_task` (LOW risk, no approval: they add to, read or reversibly change the user's own local data)
+and `cancel_task`, `cancel_reminder` (MEDIUM, approval required: cancelling cannot be undone). All are
+registered with the manager, ONE_TIME scope only, bound to the exact resolved parameters. The model proposes
+a validated action with words only (never an id or SQL); code resolves the target and asks when it is
+ambiguous. Approval of a cancellation is the user's spoken "yes", read by code from the next message and
+passed to `PermissionManager.approve(actor="user")`; the model never sees or produces it. Every other tool
+name is still denied as unknown. See `docs/tasks-and-reminders.md`.
+
 ## Configuration
 
 | Setting | Default |
@@ -210,8 +224,8 @@ holds no graph reference, and graph content cannot approve requests, run tools o
   directly by code that skips `execute`.
 - In-memory: requests, approvals, PERSISTENT permissions and the audit trail are
   lost on exit or runtime restart.
-- No approval UI or voice/dashboard flow: nothing currently approves requests, so
-  every action request ends PENDING, DENIED (unknown tool) or expires.
+- No approval UI or dashboard flow. The only approval path is the spoken yes/no for cancelling a task or
+  reminder (Phase 9); every other action request ends DENIED (unknown tool) or PENDING and expires.
 - The digest is a substitution check, not cryptographic authentication.
 - The manager is thread-safe but single-process.
 

@@ -36,3 +36,8 @@ sentence-transformers==6.1.0
 # --- Windows runtime: system tray ---
 pystray==0.19.5
 Pillow==12.3.0
+
+# --- Tasks and reminders: natural-language dates, timezone database (required on Windows), system timezone ---
+dateparser==1.4.3
+tzdata==2026.4
+tzlocal==5.4.4

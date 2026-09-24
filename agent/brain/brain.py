@@ -21,6 +21,7 @@ from agent.brain.models import (
 from agent.brain.parsing import InvalidAgentOutput, LLMDecisionOutput, parse_decision_output
 from agent.brain.prompts import RETRY_PROMPT, build_system_prompt
 from agent.planner.planner import Planner
+from agent.tasks.intents import InvalidTaskAction, TaskAction, parse_task_action
 from agent.tools.base import ToolDescriptor
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.messages import Message, Role
@@ -135,7 +136,11 @@ class AgentBrain:
 
     def _action_decision(self, output: LLMDecisionOutput, request: AgentRequest) -> AgentDecision:
         catalog = {tool.name.lower(): tool for tool in request.tools}
-        selections = [self._select(name, catalog) for name in output.tools]
+        task_action = self._task_action(output, catalog)
+        names = list(output.tools)
+        if task_action is not None and task_action.name.value not in {n.lower() for n in names}:
+            names.append(task_action.name.value)  # the action itself names the tool it needs
+        selections = [self._select(name, catalog) for name in names]
         # Fail-safe: permission is required unless every tool is known and says it is not.
         requires_permission = not selections or any(
             (not s.available) or s.requires_permission for s in selections
@@ -155,7 +160,20 @@ class AgentBrain:
             requires_permission=requires_permission,
             confidence=output.confidence,
             reasoning_summary=output.summary,
+            task_action=task_action,
         )
+
+    @staticmethod
+    def _task_action(output: LLMDecisionOutput, catalog: dict[str, ToolDescriptor]) -> TaskAction | None:
+        """Validate the model's proposed action. An invalid one makes the whole output invalid (retry, then the
+        safe fallback). A valid action for a tool that is not available (e.g. tasks are turned off) is dropped."""
+        if output.action is None:
+            return None
+        try:
+            action = parse_task_action(output.action)
+        except InvalidTaskAction as exc:
+            raise InvalidAgentOutput(f"invalid action ({exc})") from None
+        return action if action.name.value in catalog else None
 
     @staticmethod
     def _select(name: str, catalog: dict[str, ToolDescriptor]) -> ToolSelection:

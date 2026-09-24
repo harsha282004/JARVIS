@@ -6,6 +6,11 @@ needs an action, what a plan would look like, and what JARVIS should say.
 It produces a **structured decision, not an action**: nothing in Phase 4
 executes anything, and no real tools exist.
 
+> **Since Phase 9** the brain can also propose a validated task/reminder `TaskAction` (an `action` object next to
+> the intent). It is still only data: the brain never executes it and holds no service reference;
+> `TaskActionExecutor` carries it out through the PermissionManager (`docs/tasks-and-reminders.md`). An invalid
+> action makes the whole output invalid (one retry, then the safe fallback).
+
 ## Architecture
 
 ```

@@ -5,6 +5,7 @@ strict model; it is never evaluated, imported, or passed to a shell.
 """
 
 import json
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -33,6 +34,8 @@ class LLMDecisionOutput(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     summary: str = ""
     query: str = ""
+    # A proposed task/reminder action ({"name": ..., "arguments": {...}}); validated by the brain.
+    action: dict[str, Any] | None = None
 
     @field_validator("query")
     @classmethod

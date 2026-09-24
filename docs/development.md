@@ -53,6 +53,17 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Tasks and reminders (Phase 9)
+
+See `docs/tasks-and-reminders.md`. Apply the schema with `alembic -c database/alembic.ini upgrade head`
+(revision `0004_tasks_reminders`), set `JARVIS_TIMEZONE` (e.g. `Asia/Kolkata`; empty = this computer's
+timezone), and run `python -m desktop.launcher`: the scheduler starts with the runtime and shows reminders as
+tray notifications and spoken announcements. `pip install -r requirements.txt` now also installs
+`dateparser`, `tzdata` and `tzlocal`. Tests (`tests/test_task_*.py`, `tests/test_reminders_scheduler.py`) use
+an isolated SQLite database, a fake clock and a scripted LLM; set `JARVIS_TEST_DATABASE_URL` to a
+**disposable** PostgreSQL database to also run them there. `tests/integration` adds a real-Ollama action test,
+one real tray notification (`JARVIS_TEST_REAL_NOTIFICATION=1`) and a real-PostgreSQL persistence test.
+
 ## Knowledge graph (Phase 8)
 
 See `docs/knowledge-graph.md`. Apply the schema with `alembic -c database/alembic.ini upgrade head`.

@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 8** (personal knowledge graph) on top of **Phase 7** (personal RAG), **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 9** (tasks and reminders) on top of **Phase 8** (personal knowledge graph), **Phase 7** (personal RAG), **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -36,6 +36,26 @@ introducing a second configuration or logging system. It does **not**
 implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
+
+## Phase 9 scope (tasks and reminders)
+
+Phase 9 adds `agent/tasks/`: typed `Task`/`Reminder`/`Recurrence` models with explicit status enums and a
+transition table, `TaskService`/`ReminderService` (rules) over `TaskRepository` (PostgreSQL: `tasks`,
+`reminders`, migration `0004`, conditional updates so the scheduler and voice requests cannot race),
+natural-language time parsing in the user's `JARVIS_TIMEZONE` (UTC in the database), structured recurrence,
+a `NotificationService` abstraction (tray balloon, spoken announcement), and a `ReminderScheduler` thread
+started by the Windows launcher. The AgentBrain may propose a validated `TaskAction`; the
+`TaskActionExecutor` puts it through the `PermissionManager` and a `Tool` before any service is touched.
+
+```
+VoiceEngine -> ConversationEngine -> AgentBrain -> TaskAction (validated data)
+     -> TaskActionExecutor -> PermissionManager -> Tool -> TaskService / ReminderService -> PostgreSQL
+Windows runtime -> ReminderScheduler -> ReminderService -> PostgreSQL
+     -> NotificationService -> tray notification / VoiceEngine (speaks between conversations)
+```
+
+Tasks and reminders are separate from memory, RAG and the graph (no automatic links). See
+`docs/tasks-and-reminders.md`.
 
 ## Phase 8 scope (personal knowledge graph)
 
@@ -88,8 +108,8 @@ validation) and `agent/planner/` (`Plan`, `Planner`), plus `ToolDescriptor` on
 the existing `Tool` interface. Boundary: `VoiceEngine -> ConversationEngine ->
 AgentBrain -> LLMProvider`. The brain produces a structured decision (intent,
 plan, tool names, permission needs, reply) and executes nothing; the
-`decision -> PermissionManager -> Tool` path is a later phase. No real tools
-exist. See `docs/agent-brain.md`.
+`decision -> PermissionManager -> Tool` path is a later phase (Phase 9 later adds it for the local task/reminder
+tools only). See `docs/agent-brain.md`.
 
 ## Phase 3 scope (conversation engine)
 
@@ -128,7 +148,8 @@ JARVIS/
 │   ├── memory/           personal memory: interface, service, repository, extraction, safety (Phase 6)
 │   ├── rag/              personal RAG: loaders, chunker, embeddings, vector store, retriever, service (Phase 7)
 │   ├── knowledge_graph/  entities/relationships/provenance, GraphService, extraction, sync, context (Phase 8)
-│   ├── tools/            Tool interface + ToolDescriptor (no concrete tools yet)
+│   ├── tasks/            tasks, reminders, scheduler, notifications, time parsing, tools, executor (Phase 9)
+│   ├── tools/            Tool interface + ToolDescriptor (the only concrete tools are the Phase 9 task/reminder tools in agent/tasks)
 │   └── orchestrator/     will drive plans through PermissionManager + tools (empty; not built)
 │
 ├── voice/               Voice pipeline: audio I/O, wakeword/, stt/, tts/ providers,
@@ -175,9 +196,9 @@ never calls a Tool directly.** See `docs/security.md`.
 | Concern       | Choice                              | Status |
 |---------------|--------------------------------------|--------------------|
 | Backend       | Python, FastAPI, WebSockets          | FastAPI app + `/health` only; no WebSocket endpoint yet |
-| Agent         | Custom brain/planner (LangGraph/LangChain not used) | AgentBrain + Planner implemented (Phase 4, decisions only); no tools, no execution |
+| Agent         | Custom brain/planner (LangGraph/LangChain not used) | AgentBrain + Planner (Phase 4, decisions only); the executor runs only validated Phase 9 task/reminder actions, through the PermissionManager |
 | LLM           | Ollama/local first, provider abstraction | `LLMProvider` (chat, json_mode hint) + `OllamaProvider` implemented |
-| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; `personal_memories` (Phase 6), `rag_documents`, `rag_chunks` (Phase 7), `kg_entities`, `kg_relationships`, `kg_provenance` (Phase 8) |
+| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; `personal_memories` (Phase 6), `rag_documents`, `rag_chunks` (Phase 7), `kg_entities`, `kg_relationships`, `kg_provenance` (Phase 8), `tasks`, `reminders` (Phase 9) |
 | Vector storage| pgvector or similar                  | PostgreSQL tables + exact NumPy cosine search (Phase 7; pgvector deliberately not required) |
 | Embeddings    | SentenceTransformers                 | Implemented (Phase 7, local, all-MiniLM-L6-v2) |
 | Voice         | wake-word engine, Whisper/Faster-Whisper, TTS | Implemented: openWakeWord, Faster-Whisper, Piper (see docs/voice-system.md) |
@@ -210,6 +231,13 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 9 intentionally does not implement
+
+Google Calendar, Gmail, WhatsApp or any external messaging, proactive intelligence and daily briefings,
+browser or desktop automation, remote access, a dashboard or notification-preference UI, sub-tasks,
+productivity scoring, task links into memory or the graph, a Windows service (reminders fire only while
+JARVIS runs), and everything in the Phase 8 list below.
 
 ## What Phase 8 intentionally does not implement
 

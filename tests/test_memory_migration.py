@@ -134,3 +134,45 @@ def test_knowledge_graph_postgresql_sql_has_foreign_keys_and_no_extension():
     assert "CREATE TABLE kg_entities" in sql and "CREATE TABLE kg_relationships" in sql and "CREATE TABLE kg_provenance" in sql
     assert sql.count("FOREIGN KEY(source_entity_id) REFERENCES kg_entities (id) ON DELETE CASCADE") == 1
     assert "CREATE EXTENSION" not in sql
+
+
+def test_task_reminder_tables_migration_indexes_and_foreign_key(tmp_path):
+    from backend.models.tasks import ReminderRow, TaskRow
+
+    url = f"sqlite:///{tmp_path / 'tasks.db'}"
+    command.upgrade(alembic_config(url), "head")
+    engine = create_engine(url)
+    inspector = inspect(engine)
+    for model in (TaskRow, ReminderRow):
+        assert {c["name"] for c in inspector.get_columns(model.__tablename__)} == {c.name for c in model.__table__.columns}
+    assert {i["name"] for i in inspector.get_indexes("tasks")} >= {"ix_tasks_status_due_at", "ix_tasks_due_at"}
+    assert {i["name"] for i in inspector.get_indexes("reminders")} >= {"ix_reminders_status_scheduled_at", "ix_reminders_task_id"}
+    fks = inspector.get_foreign_keys("reminders")
+    assert [(fk["referred_table"], fk["constrained_columns"]) for fk in fks] == [("tasks", ["task_id"])]
+    engine.dispose()
+
+
+def test_task_reminder_migration_is_reversible_and_leaves_earlier_tables(tmp_path):
+    url = f"sqlite:///{tmp_path / 'tasks_down.db'}"
+    command.upgrade(alembic_config(url), "head")
+    command.downgrade(alembic_config(url), "0003_knowledge_graph")
+    engine = create_engine(url)
+    tables = set(inspect(engine).get_table_names())
+    assert not tables & {"tasks", "reminders"}
+    assert {"personal_memories", "rag_documents", "kg_entities"} <= tables  # earlier phases untouched
+    engine.dispose()
+    command.upgrade(alembic_config(url), "head")  # and it can be applied again
+    engine = create_engine(url)
+    assert {"tasks", "reminders"} <= set(inspect(engine).get_table_names())
+    engine.dispose()
+
+
+def test_task_reminder_postgresql_sql_uses_timezone_aware_columns_and_cascade():
+    out = io.StringIO()
+    command.upgrade(alembic_config("postgresql+psycopg2://u:p@localhost/x", out), "head", sql=True)
+    sql = out.getvalue()
+    assert "CREATE TABLE tasks" in sql and "CREATE TABLE reminders" in sql
+    assert "due_at TIMESTAMP WITH TIME ZONE" in sql and "scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL" in sql
+    assert "FOREIGN KEY(task_id) REFERENCES tasks (id) ON DELETE CASCADE" in sql
+    assert "CREATE INDEX ix_reminders_status_scheduled_at" in sql and "CREATE INDEX ix_tasks_status_due_at" in sql
+    assert "CREATE EXTENSION" not in sql

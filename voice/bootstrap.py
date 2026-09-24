@@ -17,6 +17,22 @@ from agent.rag.embeddings import SentenceTransformerProvider
 from agent.rag.retriever import Retriever
 from agent.rag.service import RagLimits, RagService
 from agent.rag.store import SqlVectorStore
+from agent.tasks.executor import TaskActionExecutor
+from agent.tasks.models import MissedPolicy, TaskPriority, utcnow
+from agent.tasks.notifications import (
+    AnnouncementQueue,
+    CompositeNotifier,
+    DesktopNotifier,
+    NotificationService,
+    VoiceNotifier,
+)
+from agent.tasks.repository import TaskRepository
+from agent.tasks.scheduler import ReminderScheduler
+from agent.tasks.service import ReminderService, TaskService
+from agent.tasks.system import TaskSystem
+from agent.tasks.timeparse import TimeParser
+from agent.tasks.tools import TaskToolContext, build_task_tools
+from agent.tasks.zone import resolve_timezone
 from agent.memory.policy import MemoryPolicy
 from agent.memory.repository import MemoryRepository
 from agent.memory.service import MemoryService
@@ -25,6 +41,7 @@ from backend.core.database import SessionLocal
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.ollama_provider import OllamaProvider
+from backend.core.logging import get_logger
 from backend.core.security import AuditLog, PermissionManager
 from voice.audio import AudioInput, AudioOutput
 from voice.engine import VoiceEngine
@@ -35,6 +52,9 @@ from voice.tts.base import TTSProvider
 from voice.tts.piper_provider import PiperProvider
 from voice.wakeword.base import WakeWordProvider
 from voice.wakeword.openwakeword_provider import OpenWakeWordProvider
+
+
+logger = get_logger(__name__)
 
 
 def _build_wakeword(settings: Settings) -> WakeWordProvider:
@@ -113,13 +133,65 @@ def build_graph_service(settings: Settings) -> GraphService | None:
     )
 
 
-def _build_conversation(settings: Settings) -> ConversationEngine:
+def build_task_system(settings: Settings, clock=utcnow) -> TaskSystem | None:
+    """Task and reminder services over one repository (database sessions are per call and per thread).
+    None when both are disabled, or when the timezone cannot be loaded (logged; JARVIS keeps running)."""
+    if not (settings.JARVIS_TASKS_ENABLED or settings.JARVIS_REMINDERS_ENABLED):
+        return None
+    try:
+        zone = resolve_timezone(settings.JARVIS_TIMEZONE)
+    except Exception as exc:  # noqa: BLE001 - e.g. no tz database; tasks are optional, the assistant is not
+        logger.error("Tasks and reminders are unavailable: timezone could not be loaded (%s)", type(exc).__name__)
+        return None
+    repository = TaskRepository(SessionLocal)
+    tasks = (
+        TaskService(
+            repository,
+            zone=zone,
+            clock=clock,
+            default_priority=TaskPriority[settings.JARVIS_DEFAULT_TASK_PRIORITY.upper()],
+        )
+        if settings.JARVIS_TASKS_ENABLED
+        else None
+    )
+    reminders = ReminderService(repository, zone=zone, clock=clock) if settings.JARVIS_REMINDERS_ENABLED else None
+    parser = TimeParser(zone)
+    tools = build_task_tools(TaskToolContext(tasks, reminders, parser, clock))
+    return TaskSystem(tasks, reminders, parser, tools, AnnouncementQueue())
+
+
+def build_reminder_scheduler(
+    settings: Settings, system: TaskSystem | None, desktop_send=None
+) -> ReminderScheduler | None:
+    """The scheduler for `system`. `desktop_send(title, message)` shows a local desktop notification (the tray's).
+    None when reminders are off or no notification channel is enabled (they could never be delivered)."""
+    if system is None or system.reminders is None:
+        return None
+    channels: list[tuple[str, NotificationService]] = []
+    if settings.JARVIS_REMINDER_DESKTOP_NOTIFICATIONS and desktop_send is not None:
+        channels.append(("desktop", DesktopNotifier(desktop_send)))
+    if settings.JARVIS_REMINDER_VOICE_NOTIFICATIONS:
+        channels.append(("voice", VoiceNotifier(system.announcements)))
+    if not channels:
+        logger.warning("No reminder notification channel is available; the reminder scheduler is not started")
+        return None
+    return ReminderScheduler(
+        system.reminders,
+        CompositeNotifier(channels),
+        tasks=system.tasks,
+        poll_seconds=settings.JARVIS_REMINDER_POLL_SECONDS,
+        missed_policy=MissedPolicy(settings.JARVIS_MISSED_REMINDER_POLICY),
+    )
+
+
+def _build_conversation(settings: Settings, task_system: TaskSystem | None = None) -> ConversationEngine:
     llm = _build_llm(settings)
-    # No tools exist yet, so the brain is given an empty tool catalog.
+    tools = task_system.tools if task_system is not None else []
+    descriptors = [tool.descriptor() for tool in tools]
     agent = (
         AgentBrain(
             llm,
-            tools=[],
+            tools=descriptors,
             max_plan_steps=settings.JARVIS_AGENT_MAX_PLAN_STEPS,
             documents_enabled=settings.JARVIS_RAG_ENABLED,
         )
@@ -135,6 +207,11 @@ def _build_conversation(settings: Settings) -> ConversationEngine:
             memory.add_listener(MemoryGraphSync(graph).handle)
         if rag is not None:
             rag.add_listener(DocumentGraphSync(graph).handle)
+    permissions = PermissionManager(
+        tools=[d.security_info() for d in descriptors],  # only the task/reminder tools are known; anything else is denied
+        audit=AuditLog(enabled=settings.JARVIS_PERMISSION_AUDIT_ENABLED),
+        default_expiry_seconds=settings.JARVIS_PERMISSION_DEFAULT_EXPIRY_SECONDS,
+    )
     return ConversationEngine(
         llm=llm,
         max_messages=settings.JARVIS_MAX_CONVERSATION_MESSAGES,
@@ -143,15 +220,12 @@ def _build_conversation(settings: Settings) -> ConversationEngine:
         memory=memory,
         rag=rag,
         graph=GraphContextProvider(graph) if graph is not None else None,
-        permissions=PermissionManager(
-            tools=[],  # no tools exist yet, so every requested tool is denied as unknown
-            audit=AuditLog(enabled=settings.JARVIS_PERMISSION_AUDIT_ENABLED),
-            default_expiry_seconds=settings.JARVIS_PERMISSION_DEFAULT_EXPIRY_SECONDS,
-        ),
+        permissions=permissions,
+        actions=TaskActionExecutor(tools, permissions) if tools and agent is not None else None,
     )
 
 
-def build_voice_engine(settings: Settings) -> VoiceEngine:
+def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None) -> VoiceEngine:
     """Construct a VoiceEngine wired to the providers named in `settings`.
 
     Raises ProviderNotConfiguredError / AudioDeviceError with a clear
@@ -167,7 +241,7 @@ def build_voice_engine(settings: Settings) -> VoiceEngine:
     return VoiceEngine(
         wakeword=_build_wakeword(settings),
         stt=_build_stt(settings),
-        conversation=_build_conversation(settings),
+        conversation=_build_conversation(settings, task_system),
         tts=_build_tts(settings),
         audio_input=AudioInput(
             sample_rate=settings.AUDIO_SAMPLE_RATE, device=settings.MICROPHONE_DEVICE
@@ -177,4 +251,5 @@ def build_voice_engine(settings: Settings) -> VoiceEngine:
         audio_output=AudioOutput(),
         sample_rate=settings.AUDIO_SAMPLE_RATE,
         listen_seconds=settings.AUDIO_LISTEN_SECONDS,
+        announcements=task_system.announcements if task_system is not None else None,
     )

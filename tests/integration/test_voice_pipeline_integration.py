@@ -189,3 +189,139 @@ def test_real_ollama_graph_extraction_produces_validated_facts():
     names = {e.name.lower() for e in result.entities}
     assert {"jarvis", "fastapi"} <= names  # reasonable entities, all grounded in the text by validation
     assert all(f.provenance.source_name == "test.md" for f in result.facts)
+
+
+@pytest.mark.integration
+def test_real_ollama_proposes_a_valid_reminder_action():
+    """A real model, given the task tools, must return an action that passes validation. Nothing is executed."""
+    settings = get_settings()
+    if not _ollama_reachable(settings.OLLAMA_BASE_URL):
+        pytest.skip(f"Ollama not reachable at {settings.OLLAMA_BASE_URL}")
+
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from agent.brain.brain import AgentBrain
+    from agent.brain.models import Intent
+    from agent.tasks.timeparse import TimeParser
+    from agent.tasks.tools import TaskToolContext, build_task_tools
+    from backend.core.llm.ollama_provider import OllamaProvider
+
+    zone = ZoneInfo("Asia/Kolkata")
+    tools = build_task_tools(TaskToolContext(object(), object(), TimeParser(zone), lambda: datetime.now(timezone.utc)))
+    brain = AgentBrain(
+        OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model=settings.LLM_MODEL),
+        tools=[t.descriptor() for t in tools],
+        max_plan_steps=8,
+    )
+    decision = brain.decide(brain.build_request("Remind me tomorrow at 9 AM to submit my assignment.", []))
+    assert decision.intent is Intent.ACTION_REQUEST and decision.task_action is not None
+    assert decision.task_action.name.value == "create_reminder"
+    assert decision.task_action.arguments.when  # the phrase is kept for deterministic parsing
+
+
+@pytest.mark.integration
+def test_real_windows_desktop_notification():
+    """Shows ONE real notification balloon from a real tray icon. Opt in with JARVIS_TEST_REAL_NOTIFICATION=1
+    (it pops up on screen, so it is not part of normal runs)."""
+    import os
+    import sys
+    import threading
+    import time
+    from datetime import datetime, timezone
+
+    if sys.platform != "win32":
+        pytest.skip("Windows only")
+    if os.environ.get("JARVIS_TEST_REAL_NOTIFICATION") != "1":
+        pytest.skip("set JARVIS_TEST_REAL_NOTIFICATION=1 to show one real notification")
+
+    from agent.tasks.notifications import DesktopNotifier
+    from desktop.runtime.state import RuntimeState, RuntimeStatus
+    from desktop.tray.tray import TrayController
+
+    class Manager:
+        state = RuntimeState.RUNNING
+
+        def status(self):
+            return RuntimeStatus(
+                state=self.state, voice_state=None, started_at=datetime.now(timezone.utc),
+                last_error=None, microphone_active=False,
+            )
+
+        def add_listener(self, listener):
+            pass
+
+    tray = TrayController(Manager(), threading.Event().set)
+    tray.start()
+    try:
+        DesktopNotifier(tray.notify).notify("Reminder: this is a JARVIS test notification (Phase 9)")
+        time.sleep(2)  # give the shell time to display it
+    finally:
+        tray.stop()
+
+
+@pytest.mark.integration
+def test_real_postgresql_task_and_reminder_persistence():
+    """Create, restart, retrieve, complete and cancel against a DISPOSABLE PostgreSQL database
+    (JARVIS_TEST_DATABASE_URL). The tables are created and dropped by this test."""
+    import os
+    import time
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    url = os.environ.get("JARVIS_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("JARVIS_TEST_DATABASE_URL not set (needs a disposable PostgreSQL database)")
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import backend.models.tasks  # noqa: F401
+    from agent.tasks.models import ReminderStatus, TaskStatus
+    from agent.tasks.notifications import NotificationService
+    from agent.tasks.repository import TaskRepository
+    from agent.tasks.scheduler import ReminderScheduler
+    from agent.tasks.service import ReminderService, TaskService
+    from backend.models.base import Base
+
+    zone = ZoneInfo("Asia/Kolkata")
+
+    def services():
+        engine = create_engine(url)
+        repo = TaskRepository(sessionmaker(bind=engine, expire_on_commit=False))
+        return engine, TaskService(repo, zone=zone), ReminderService(repo, zone=zone)
+
+    engine, tasks, reminders = services()
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    try:
+        now = datetime.now(timezone.utc)
+        task = tasks.create_task("Finish docs", due_at=now + timedelta(days=1))
+        reminder = reminders.create_reminder("Call Mom", now + timedelta(hours=1))
+        engine.dispose()
+
+        engine2, tasks2, reminders2 = services()  # "restart"
+        assert tasks2.get_task(task.task_id) == task
+        assert reminders2.get_reminder(reminder.reminder_id) == reminder
+        tasks2.complete_task(task.task_id)
+        reminders2.cancel_reminder(reminder.reminder_id)
+        engine2.dispose()
+
+        engine3, tasks3, reminders3 = services()
+        assert tasks3.get_task(task.task_id).status is TaskStatus.COMPLETED
+        assert reminders3.get_reminder(reminder.reminder_id).status is ReminderStatus.CANCELLED
+
+        class Recorder(NotificationService):
+            def notify(self, message, metadata=None):
+                pass
+
+        due = reminders3.create_reminder("due soon", datetime.now(timezone.utc) + timedelta(seconds=1))
+        scheduler = ReminderScheduler(reminders3, Recorder(), tasks=tasks3, poll_seconds=1)
+        time.sleep(1.5)
+        assert scheduler.run_once() == 1 and scheduler.run_once() == 0  # delivered exactly once
+        assert reminders3.get_reminder(due.reminder_id).status is ReminderStatus.TRIGGERED
+        engine3.dispose()
+    finally:
+        cleanup = create_engine(url)
+        Base.metadata.drop_all(cleanup)
+        cleanup.dispose()

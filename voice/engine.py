@@ -18,6 +18,7 @@ import numpy as np
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProviderError
 from backend.core.logging import get_logger
+from agent.tasks.notifications import AnnouncementQueue
 from voice.audio import AudioInput, AudioOutput
 from voice.exceptions import VoiceProviderError
 from voice.stt.base import STTProvider
@@ -49,6 +50,7 @@ class VoiceEngine:
         sample_rate: int,
         listen_seconds: float,
         activation_reply: str = "Yes?",
+        announcements: AnnouncementQueue | None = None,
     ):
         self._wakeword = wakeword
         self._stt = stt
@@ -59,6 +61,7 @@ class VoiceEngine:
         self._sample_rate = sample_rate
         self._listen_seconds = listen_seconds
         self._activation_reply = activation_reply
+        self._announcements = announcements
         self.state = VoiceState.WAITING
 
     @property
@@ -97,6 +100,21 @@ class VoiceEngine:
         logger.info("LLM_RESPONSE_RECEIVED length=%d", len(response))
         return response
 
+    def _speak_announcements(self) -> None:
+        """Speak queued reminder announcements. Called only on this (the voice) thread while waiting for the
+        wake word, so nothing else touches the audio devices and no conversation is interrupted."""
+        if self._announcements is None:
+            return
+        spoke = False
+        while (text := self._announcements.get_nowait()) is not None:
+            spoke = True
+            try:
+                self._speak(text)
+            except Exception as exc:  # noqa: BLE001 - a failed announcement must not stop listening
+                logger.error("Announcement could not be spoken (%s)", type(exc).__name__)
+        if spoke:
+            self.state = VoiceState.WAITING
+
     def run_once(self, should_stop: Callable[[], bool] | None = None) -> str | None:
         """Wait for the wake word, then converse until the user stops talking,
         the conversation times out, or `should_stop` is set. Returns the last
@@ -106,6 +124,15 @@ class VoiceEngine:
         polled while waiting for the wake word and between turns. If it fires
         while waiting, the microphone is released and this returns None.
         """
+        if self._announcements is not None:
+            self._announcements.set_accepting(True)
+        try:
+            return self._run_once(should_stop)
+        finally:
+            if self._announcements is not None:
+                self._announcements.set_accepting(False)
+
+    def _run_once(self, should_stop: Callable[[], bool] | None) -> str | None:
         logger.info("VOICE_ENGINE_STARTED state=%s", self.state)
         self.state = VoiceState.WAITING
 
@@ -114,6 +141,7 @@ class VoiceEngine:
                 if should_stop is not None and should_stop():
                     self.state = VoiceState.WAITING
                     return None
+                self._speak_announcements()
                 frame = self._audio_input.read_frame()
                 if self._wakeword.process(frame):
                     logger.info("WAKE_WORD_DETECTED")

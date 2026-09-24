@@ -3,9 +3,17 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 8 — Personal Knowledge Graph
+## Current status: Phase 9 — Task & Reminder Engine
 
-Phases 0-7 are complete. Phase 8 adds a relational knowledge graph (entities, typed
+Phases 0-8 are complete. Phase 9 adds a persistent local task and reminder engine: "Remind me tomorrow at 9 AM to
+submit my assignment", "Remind me every Monday at 8 AM to review my weekly goals", "What tasks do I have today?",
+"Mark my JARVIS documentation task as completed", "Cancel my assignment reminder". Times are parsed in your
+`JARVIS_TIMEZONE` and stored as UTC in PostgreSQL; a scheduler thread started by the Windows launcher delivers due
+reminders once (tray notification and a spoken announcement) and follows a documented missed-reminder policy. The
+AgentBrain only proposes a validated structured action; it goes through the `PermissionManager` (cancelling asks
+you to say yes first) and a tool before the database is touched, and ambiguous requests are clarified, never
+guessed. It is local only: no Calendar, Gmail or messaging, and it does not touch memory, RAG or the graph. Run
+`alembic -c database/alembic.ini upgrade head` and see `docs/tasks-and-reminders.md`. Phase 8 adds a relational knowledge graph (entities, typed
 relationships, provenance, confidence and trust levels) derived from your personal memory and
 indexed documents, so JARVIS can answer relationship questions ("Which projects use Python?",
 "How is FastAPI related to JARVIS?"). Facts keep their sources, are invalidated when the memory or
@@ -29,14 +37,14 @@ into a real authorization layer: typed permission requests with risk levels,
 scopes (one-time/session/persistent), expiry, action binding, explicit
 approve/deny, session scoping and an in-memory audit trail. Action decisions
 now create permission requests (all denied or pending today, since no tools
-exist and nothing approves them). **Nothing is executed and there are still no
-real tools.** Phase 4 adds a reasoning layer: for each request
+exist and nothing approves them). **At that phase nothing was executed and no
+real tools existed** (Phase 9 later added the local task/reminder tools). Phase 4 adds a reasoning layer: for each request
 JARVIS classifies the intent (conversation, information, action, clarification,
 unsupported), decides whether an action would be needed, and produces a
 structured decision with a plan, selected tool names and permission needs.
-**It executes nothing and no tools exist yet**: an action request such as
-"send an email" gets a plan and an honest "I can't carry out actions like that
-yet". Phase 3 made JARVIS multi-turn: follow-up
+**The brain itself executes nothing**: an action request such as
+"send an email" still gets a plan and an honest "I can't carry out actions like that
+yet" because no such tool exists. Phase 3 made JARVIS multi-turn: follow-up
 questions ("Who created it?") are answered using the earlier turns of the
 same in-memory conversation session, which ends after an inactivity timeout.
 Phase 2 runs
@@ -44,9 +52,9 @@ the voice engine as a persistent Windows background app with a system-tray
 icon (status, pause/resume, restart, exit), graceful shutdown, sleep/resume
 recovery, and optional start-with-Windows. Phase 1 provides a functional local
 voice pipeline: say "Hey JARVIS", ask a question, get a spoken answer from
-a local LLM via Ollama. **No tool execution, integrations (Gmail, Calendar,
-messaging, ...), tasks/reminders, installer/packaging, or frontend
-functionality is implemented yet.** Conversation history itself is in memory
+a local LLM via Ollama. **The only tools are the local task/reminder ones; integrations
+(Gmail, Calendar, messaging, ...), proactive features, installer/packaging and the frontend
+are not implemented yet.** Conversation history itself is in memory
 only and is lost on exit; durable knowledge lives in personal memory, RAG and
 the knowledge graph.
 
@@ -57,7 +65,7 @@ voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/security-and-permissions.md` for the permission layer,
 `docs/personal-memory.md` for personal memory,
 `docs/personal-rag.md` for personal RAG,
-`docs/knowledge-graph.md` for the knowledge graph, and `docs/requirements.md` for what each
+`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -76,14 +84,14 @@ phase does and does not cover.
 
 ```
 backend/        FastAPI application (API, core incl. LLM + conversation engine, models, services)
-agent/          brain + planner (decision/plan only), personal memory, RAG and knowledge graph (implemented); tools (interface only); orchestrator (empty)
+agent/          brain + planner (decision/plan only), personal memory, RAG, knowledge graph and tasks/reminders (implemented); tools (interface + the local task/reminder tools); orchestrator (empty)
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
 integrations/   External-service boundary: gmail, calendar, messaging, ... (interfaces only)
 desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) — implemented
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph docs
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph, tasks-and-reminders docs
 scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py, kg_cli.py)
 ```
 
@@ -140,6 +148,9 @@ lifecycle, startup integration, troubleshooting and limitations.
   detection yet).
 - Follow-up listening is a fixed window; no interruption (barge-in) handling.
 - Conversation context is in memory only, limited by message count.
+- Tasks/reminders: English only, a subset of recurrences, reminders fire only while JARVIS runs (no Windows
+  service), voice delivery is best effort, cancelling is confirmed by a spoken yes; verified here on SQLite, not on
+  the development PostgreSQL (see docs/tasks-and-reminders.md).
 - Knowledge graph: memory mapping covers Phase 6's templated sentences; document extraction is
   explicit (CLI) and only as good as the local LLM; not verified against PostgreSQL or a real Ollama.
 - RAG: TXT/Markdown/PDF only (no OCR, DOCX or hybrid search); exact vector search that
@@ -148,14 +159,13 @@ lifecycle, startup integration, troubleshooting and limitations.
 - Memory: rule-based extraction of English statements, keyword retrieval, no
   confirmation/correction/delete UI; PostgreSQL persistence not verified on the
   development machine (see docs/personal-memory.md).
-- Permissions: in-process and in-memory; no approval UI, nothing approves
-  requests yet, no persistence.
-- Agent brain: decisions and plans only; every action request is declined
-  because no tools exist; classification quality depends on the local model.
+- Permissions: in-process and in-memory; no approval UI (only the spoken yes/no for cancelling a task or
+  reminder), no persistence.
+- Agent brain: decisions and plans; only task/reminder actions are carried out, every other action request is
+  declined because no such tools exist; classification quality depends on the local model.
 - Runtime: no installer or Windows service; no external control besides the
   tray/Ctrl+C; sleep is detected after the fact (see the runtime doc).
-- JARVIS has no memory, Gmail, Calendar, messaging, or RAG — it will say
-  so if asked, rather than inventing an answer.
+- JARVIS has no Gmail, Calendar or messaging — it will say so if asked, rather than inventing an answer.
 
 ## Security model
 
@@ -168,7 +178,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph. Later phases — tools, the approval UI, tasks and reminders,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders. Later phases — more tools, the approval UI,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

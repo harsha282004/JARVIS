@@ -20,6 +20,7 @@ from agent.memory.service import MemoryService
 from agent.rag.grounding import RAG_DISABLED_RESPONSE
 from agent.rag.models import RAGAnswer
 from agent.rag.service import RagService
+from agent.tasks.executor import TaskActionExecutor
 from backend.core.conversation.models import ConversationSession
 from backend.core.conversation.prompts import SYSTEM_PROMPT
 from backend.core.llm.base import LLMProvider
@@ -49,6 +50,7 @@ class ConversationEngine:
         memory: MemoryService | None = None,
         rag: RagService | None = None,
         graph: GraphContextProvider | None = None,
+        actions: TaskActionExecutor | None = None,
     ):
         if max_messages < MIN_MAX_MESSAGES:
             raise ValueError(f"max_messages must be at least {MIN_MAX_MESSAGES}")
@@ -62,10 +64,12 @@ class ConversationEngine:
         self._memory = memory
         self._rag = rag
         self._graph = graph
+        self._actions = actions
         self._session: ConversationSession | None = None
         self.last_decision: AgentDecision | None = None
         self.last_permission_requests: list[PermissionRequest] = []
         self.last_rag_answer: RAGAnswer | None = None
+        self._action_handled = False
 
     @property
     def session(self) -> ConversationSession | None:
@@ -175,6 +179,10 @@ class ConversationEngine:
     def _generate_reply(
         self, session: ConversationSession, user_message: Message, memory_block: str = "", graph_block: str = ""
     ) -> str:
+        self._action_handled = False
+        confirmed = self._answer_confirmation(session, user_message)
+        if confirmed is not None:
+            return confirmed
         context = self._build_context(session, user_message, "\n\n".join(b for b in (memory_block, graph_block) if b))
         if self._agent is None:
             return self._llm.chat(context)
@@ -183,15 +191,42 @@ class ConversationEngine:
         request = self._agent.build_request(user_message.content, context[1:-1], memory_block, graph_block)
         decision = self._agent.decide(request)
         self.last_decision = decision
+        if decision.task_action is not None and self._actions is not None:
+            return self._carry_out_action(decision, session)
         if decision.intent is Intent.DOCUMENT_QUESTION:
             return self._answer_from_documents(
                 decision, user_message, context[1:-1], "\n\n".join(b for b in (memory_block, graph_block) if b)
             )
         return decision.response
 
+    def _answer_confirmation(self, session: ConversationSession, user_message: Message) -> str | None:
+        """If the user is answering a pending "do you want me to cancel ...?" question, handle it here,
+        deterministically and without the LLM. Anything that is not a clear yes/no is handled as a new request."""
+        if self._actions is None:
+            return None
+        outcome = self._actions.confirm(user_message.content, session.session_id)
+        if outcome is None:
+            return None
+        self.last_decision = None
+        self._action_handled = True
+        self.last_permission_requests = [outcome.permission_request] if outcome.permission_request else []
+        return outcome.reply
+
+    def _carry_out_action(self, decision: AgentDecision, session: ConversationSession) -> str:
+        """Hand a validated task/reminder action to the executor (PermissionManager -> tool -> service).
+        The reply says only what actually happened."""
+        assert self._actions is not None and decision.task_action is not None
+        outcome = self._actions.execute(decision.task_action, session.session_id)
+        self._action_handled = True
+        self.last_permission_requests = [outcome.permission_request] if outcome.permission_request else []
+        logger.info("Task action handled (action=%s, executed=%s)", decision.task_action.name.value, outcome.executed)
+        return outcome.reply
+
     def _request_permissions(self, session_id: str) -> None:
         """Ask the PermissionManager about the decision's tools. Never approves
         or runs anything; a failure here only means no request was recorded."""
+        if self._action_handled:  # the executor already went through the PermissionManager for this turn
+            return
         self.last_permission_requests = []
         decision = self.last_decision
         if self._permissions is None or decision is None or not decision.action_required:
