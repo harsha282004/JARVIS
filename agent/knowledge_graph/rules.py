@@ -21,11 +21,14 @@ ALLOWED: dict[R, tuple[frozenset[E], frozenset[E]]] = {
     R.PART_OF: (_NON_DOCUMENT, _NON_DOCUMENT),
     R.RELATED_TO: (_ANY, _ANY),
     R.MENTIONS: (frozenset({E.DOCUMENT}), _NON_DOCUMENT),
-    R.DOCUMENTED_IN: (frozenset({E.PROJECT, E.TECHNOLOGY, E.TOPIC, E.ORGANIZATION, E.SKILL}), frozenset({E.DOCUMENT})),
+    R.DOCUMENTED_IN: (
+        frozenset({E.PROJECT, E.TECHNOLOGY, E.TOPIC, E.ORGANIZATION, E.SKILL, E.EVENT}), frozenset({E.DOCUMENT})
+    ),
     R.HAS_SKILL: (frozenset({E.PERSON}), frozenset({E.SKILL})),
     R.HAS_GOAL: (frozenset({E.PERSON}), frozenset({E.GOAL})),
     R.LOCATED_IN: (frozenset({E.PERSON, E.ORGANIZATION}), frozenset({E.LOCATION})),
     R.DEPENDS_ON: (frozenset({E.PROJECT, E.TECHNOLOGY}), frozenset({E.PROJECT, E.TECHNOLOGY})),
+    R.HAS_DEADLINE: (frozenset({E.PROJECT, E.GOAL}), frozenset({E.EVENT})),
 }
 
 # (source type, relationship) pairs where an entity can hold only ONE current target.

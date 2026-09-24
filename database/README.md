@@ -49,6 +49,10 @@ logs the underlying error.
   `tasks.id` with `ON DELETE CASCADE`. All timestamps are timezone-aware and stored as UTC. Migration
   `0004_tasks_reminders`.
 
+- `events` (Phase 11): events and deadlines with provenance and confidence; `task_id` is a foreign key to `tasks.id` with
+  `ON DELETE SET NULL`; `(source_type, source_id, dedupe_key)` is unique. Timestamps are timezone-aware, stored as UTC.
+  Migration `0005_events`.
+
 ## Migrations
 
 Once real models exist, generate and apply migrations with:

@@ -14,6 +14,12 @@ derived, provenance-tagged relationships.
 | Personal RAG (Phase 7) | What do your documents say? | your documents |
 | Knowledge graph (Phase 8) | How are entities and facts related? | derived from the two above |
 
+## Event links (Phase 11)
+
+The schema has one extra entity type, `EVENT`, and one extra relationship, `HAS_DEADLINE` (`PROJECT|GOAL -> EVENT`); `DOCUMENTED_IN`
+also allows `EVENT -> DOCUMENT` and `RELATED_TO` already allowed `PERSON -> EVENT`. Links are made only by the event layer, only to
+existing entities, with provenance (`docs/event-and-deadline-intelligence.md`).
+
 ## Architecture
 
 ```

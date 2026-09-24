@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from agent.planner.models import Plan
 from agent.tasks.intents import TaskAction
+from agent.events.intents import EventAction
 from integrations.gmail.intents import GmailAction
 from agent.tools.base import ToolDescriptor
 from backend.core.llm.messages import Message
@@ -80,6 +81,8 @@ class AgentDecision(BaseModel):
     task_action: TaskAction | None = None
     # A validated Gmail action (Phase 10; read-only). Also data only: it is executed through the PermissionManager.
     gmail_action: GmailAction | None = None
+    # A validated event/deadline action (Phase 11). Data only, like the others: executed through the PermissionManager.
+    event_action: EventAction | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "AgentDecision":
@@ -90,8 +93,8 @@ class AgentDecision(BaseModel):
             raise ValueError("only action_request decisions may carry a plan, tools or permission needs")
         if self.search_query is not None and self.intent is not Intent.DOCUMENT_QUESTION:
             raise ValueError("only document_question decisions may carry a search query")
-        if (self.task_action is not None or self.gmail_action is not None) and not is_action:
-            raise ValueError("only action_request decisions may carry a task or Gmail action")
+        if (self.task_action is not None or self.gmail_action is not None or self.event_action is not None) and not is_action:
+            raise ValueError("only action_request decisions may carry a task, Gmail or event action")
         return self
 
     @property

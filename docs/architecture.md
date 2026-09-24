@@ -4,7 +4,7 @@
 
 JARVIS is a persistent, voice-controlled, AI-powered personal digital
 assistant for Windows. This document describes the architecture as of
-**Phase 10** (Gmail intelligence, read-only) on top of **Phase 9** (tasks and reminders), **Phase 8** (personal knowledge graph), **Phase 7** (personal RAG), **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
+**Phase 11** (event & deadline intelligence) on top of **Phase 10** (Gmail intelligence, read-only), **Phase 9** (tasks and reminders), **Phase 8** (personal knowledge graph), **Phase 7** (personal RAG), **Phase 6** (personal memory), **Phase 5** (permission and security), **Phase 4** (agent brain), **Phase 3** (conversation engine), **Phase 2** (Windows runtime), **Phase 1** (voice engine) and the **Phase 0** foundation and the
 directory boundaries all later phases build on. Voice-specific detail
 (providers, pipeline, setup) lives in `docs/voice-system.md`; this
 document stays the map of the whole codebase.
@@ -36,6 +36,15 @@ introducing a second configuration or logging system. It does **not**
 implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
+
+## Phase 11 scope (event & deadline intelligence)
+
+Phase 11 adds `agent/events/`: a typed `Event` model (events and deadlines, with provenance and extraction confidence),
+`EventService` over `EventRepository` (PostgreSQL `events`, migration `0005`), date resolution on the Phase 9 `TimeParser`,
+bounded temporal reasoning, informational conflict detection, deterministic extraction from Gmail, indexed documents and
+explicit memories (only when the user asks), a controlled Knowledge Graph link (`EVENT`, `HAS_DEADLINE`), and eight
+permission-gated tools through the existing executor. It is an internal layer: no calendar integration (Phase 12), no
+proactive notifications (Phase 14). See `docs/event-and-deadline-intelligence.md`.
 
 ## Phase 10 scope (Gmail intelligence)
 
@@ -159,6 +168,7 @@ JARVIS/
 │   ├── rag/              personal RAG: loaders, chunker, embeddings, vector store, retriever, service (Phase 7)
 │   ├── knowledge_graph/  entities/relationships/provenance, GraphService, extraction, sync, context (Phase 8)
 │   ├── tasks/            tasks, reminders, scheduler, notifications, time parsing, tools, executor (Phase 9)
+│   ├── events/           events/deadlines, extraction, temporal reasoning, conflicts, graph links, tools (Phase 11)
 │   ├── tools/            Tool interface + ToolDescriptor (the only concrete tools are the Phase 9 task/reminder tools in agent/tasks)
 │   └── orchestrator/     will drive plans through PermissionManager + tools (empty; not built)
 │
@@ -208,7 +218,7 @@ never calls a Tool directly.** See `docs/security.md`.
 | Backend       | Python, FastAPI, WebSockets          | FastAPI app + `/health` only; no WebSocket endpoint yet |
 | Agent         | Custom brain/planner (LangGraph/LangChain not used) | AgentBrain + Planner (Phase 4, decisions only); the executor runs only validated Phase 9 task/reminder actions, through the PermissionManager |
 | LLM           | Ollama/local first, provider abstraction | `LLMProvider` (chat, json_mode hint) + `OllamaProvider` implemented |
-| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; `personal_memories` (Phase 6), `rag_documents`, `rag_chunks` (Phase 7), `kg_entities`, `kg_relationships`, `kg_provenance` (Phase 8), `tasks`, `reminders` (Phase 9) |
+| Database      | PostgreSQL, SQLAlchemy, Alembic      | Engine/session + Alembic; `personal_memories` (Phase 6), `rag_documents`, `rag_chunks` (Phase 7), `kg_entities`, `kg_relationships`, `kg_provenance` (Phase 8), `tasks`, `reminders` (Phase 9), `events` (Phase 11) |
 | Vector storage| pgvector or similar                  | PostgreSQL tables + exact NumPy cosine search (Phase 7; pgvector deliberately not required) |
 | Embeddings    | SentenceTransformers                 | Implemented (Phase 7, local, all-MiniLM-L6-v2) |
 | Voice         | wake-word engine, Whisper/Faster-Whisper, TTS | Implemented: openWakeWord, Faster-Whisper, Piper (see docs/voice-system.md) |
@@ -241,6 +251,12 @@ personal RAG, a knowledge graph, task/reminder management, proactive
 intelligence, research mode, vision, multi-agent orchestration, the React
 dashboard, and production packaging. These are deferred to later phases
 per the JARVIS master specification.
+
+## What Phase 11 intentionally does not implement
+
+Google Calendar or any calendar integration or sync, proactive notifications, reminders created for events, a daily
+briefing, automatic or scheduled extraction, automatic rescheduling, recurring or multi-day events, event UI, and everything
+in the Phase 10 list below.
 
 ## What Phase 10 intentionally does not implement
 

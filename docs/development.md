@@ -53,6 +53,13 @@ Tests are deterministic and do not require a live PostgreSQL instance —
 and `test_database.py` only checks that the connectivity check behaves
 correctly (returns a bool), not that a real database is reachable.
 
+## Events and deadlines (Phase 11)
+
+See `docs/event-and-deadline-intelligence.md`. Apply the schema with `alembic -c database/alembic.ini upgrade head`
+(revision `0005_events`); it uses `JARVIS_TIMEZONE`. Tests (`tests/test_event_*.py`) use isolated SQLite, a fake clock, a
+scripted LLM and doubles for Gmail/documents/memory; set `JARVIS_TEST_DATABASE_URL` to a **disposable** PostgreSQL database to
+also run them there and the real-PostgreSQL test in `tests/integration`. No new dependencies.
+
 ## Gmail (Phase 10)
 
 See `docs/gmail-intelligence.md` for the Google Cloud setup. In short: enable the Gmail API, create a *Desktop

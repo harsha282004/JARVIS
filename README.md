@@ -3,9 +3,16 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 10 — Gmail Intelligence
+## Current status: Phase 11 — Event & Deadline Intelligence
 
-Phases 0-9 are complete. Phase 10 lets JARVIS read your Gmail **read-only** (OAuth desktop flow, `gmail.readonly`
+Phases 0-10 are complete. Phase 11 gives JARVIS its own structured record of your dates: interviews, meetings, exams,
+assignment and application deadlines. It learns them from what you say ("My exam is on December 12") and, only when you ask,
+from an email, an indexed document or something you told it, keeping where each came from and how sure it is; low-confidence
+finds wait for your confirmation. Ask "what's coming up this week", "when is my next interview", "what's overdue", "how many
+days until my exam"; overlaps are reported, never fixed. Vague dates ("next week") are asked about, not guessed. Changes go
+through the PermissionManager (cancelling, updating and extracting need your yes). It is internal only: no Google Calendar
+(Phase 12), no proactive notifications (Phase 14). Run `alembic -c database/alembic.ini upgrade head`; see
+`docs/event-and-deadline-intelligence.md`. Phase 10 lets JARVIS read your Gmail **read-only** (OAuth desktop flow, `gmail.readonly`
 scope): search, read messages and threads, attachment metadata, classification and local-LLM summaries ("Do I have
 unread emails?", "Summarize the latest email from John"). It goes through the same PermissionManager-gated tool
 path, email text is treated as untrusted data (never shown to the agent brain or kept in history), results are
@@ -57,7 +64,7 @@ the voice engine as a persistent Windows background app with a system-tray
 icon (status, pause/resume, restart, exit), graceful shutdown, sleep/resume
 recovery, and optional start-with-Windows. Phase 1 provides a functional local
 voice pipeline: say "Hey JARVIS", ask a question, get a spoken answer from
-a local LLM via Ollama. **The only tools are the local task/reminder ones and the read-only Gmail ones; other integrations
+a local LLM via Ollama. **The only tools are the local task/reminder ones, the read-only Gmail ones and the local event/deadline ones; other integrations
 (Calendar, messaging, ...), proactive features, installer/packaging and the frontend
 are not implemented yet.** Conversation history itself is in memory
 only and is lost on exit; durable knowledge lives in personal memory, RAG and
@@ -70,7 +77,7 @@ voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/security-and-permissions.md` for the permission layer,
 `docs/personal-memory.md` for personal memory,
 `docs/personal-rag.md` for personal RAG,
-`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, `docs/gmail-intelligence.md` for Gmail, and `docs/requirements.md` for what each
+`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, `docs/gmail-intelligence.md` for Gmail, `docs/event-and-deadline-intelligence.md` for events and deadlines, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -89,14 +96,14 @@ phase does and does not cover.
 
 ```
 backend/        FastAPI application (API, core incl. LLM + conversation engine, models, services)
-agent/          brain + planner (decision/plan only), personal memory, RAG, knowledge graph and tasks/reminders (implemented); tools (interface + the local task/reminder tools); orchestrator (empty)
+agent/          brain + planner (decision/plan only), personal memory, RAG, knowledge graph, tasks/reminders and events/deadlines (implemented); tools (interface + the local task/reminder tools); orchestrator (empty)
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
 integrations/   External-service boundary: gmail, calendar, messaging, ... (interfaces only)
 desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) — implemented
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
-docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph, tasks-and-reminders docs
+docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph, tasks-and-reminders, event-and-deadline-intelligence docs
 scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py, kg_cli.py, gmail_cli.py)
 ```
 
@@ -153,6 +160,9 @@ lifecycle, startup integration, troubleshooting and limitations.
   detection yet).
 - Follow-up listening is a fixed window; no interruption (barge-in) handling.
 - Conversation context is in memory only, limited by message count.
+- Events/deadlines: rule-based English extraction (needs a cue and a date in one sentence), vague dates are asked about,
+  no ranges or recurring events, extraction only on request, no calendar sync or notifications; verified here on SQLite, not on
+  the development PostgreSQL (see docs/event-and-deadline-intelligence.md).
 - Gmail: read-only; summaries are local-LLM output and can be wrong; follow-ups do not refer to earlier email
   replies; setup is manual (Google Cloud OAuth client); untested against a real account here.
 - Tasks/reminders: English only, a subset of recurrences, reminders fire only while JARVIS runs (no Windows
@@ -186,7 +196,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders and Phase 10 read-only Gmail. Later phases — more tools, the approval UI,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders and Phase 10 read-only Gmail and Phase 11 event & deadline intelligence. Later phases — more tools, the approval UI,
 integrations (Gmail, Calendar, messaging), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

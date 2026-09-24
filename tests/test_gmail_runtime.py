@@ -15,7 +15,8 @@ def settings(tmp_path=None, **overrides) -> Settings:
     base = {
         "DATABASE_URL": "postgresql+psycopg2://jarvis:jarvis@localhost:5432/jarvis_test",
         "JARVIS_MEMORY_ENABLED": False, "JARVIS_RAG_ENABLED": False, "JARVIS_KG_ENABLED": False,
-        "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_TIMEZONE": "Asia/Kolkata",
+        "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_EVENTS_ENABLED": False,
+        "JARVIS_TIMEZONE": "Asia/Kolkata",
     }
     if tmp_path is not None:
         base["JARVIS_GMAIL_CREDENTIALS_PATH"] = str(tmp_path / "credentials.json")
@@ -101,3 +102,28 @@ def test_cli_status_reports_missing_files_without_secrets(tmp_path, monkeypatch,
         assert "TOPSECRET" not in out and "found" in out  # file contents are never printed
     finally:
         get_settings.cache_clear()
+
+
+def test_event_settings_defaults_bounds_and_bootstrap(tmp_path):
+    from backend.core.config import Settings
+    from backend.core.security import PermissionStatus
+    from voice.bootstrap import _build_conversation, build_event_tools_for
+
+    base = {"DATABASE_URL": "postgresql+psycopg2://u:p@localhost/x", "JARVIS_MEMORY_ENABLED": False, "JARVIS_RAG_ENABLED": False,
+            "JARVIS_KG_ENABLED": False, "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_TIMEZONE": "Asia/Kolkata"}
+    s = Settings(_env_file=None, **base)
+    assert (s.JARVIS_EVENTS_ENABLED, s.JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS, s.JARVIS_EVENT_MAX_RESULTS) == (True, 7, 20)
+    for bad in ({"JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS": 0}, {"JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS": 366}, {"JARVIS_EVENT_MAX_RESULTS": 0}, {"JARVIS_EVENT_MAX_RESULTS": 101}):
+        with pytest.raises(ValueError):
+            Settings(_env_file=None, **base, **bad)
+
+    off = Settings(_env_file=None, **base, JARVIS_EVENTS_ENABLED=False)
+    assert build_event_tools_for(off, None) == [] and _build_conversation(off, None)._actions is None
+
+    engine = _build_conversation(s, None)  # Gmail disabled: no event_extract source except none, so seven tools
+    perms = engine._permissions
+    assert perms.request_permission("event_create", "execute").status is PermissionStatus.APPROVED
+    assert perms.request_permission("event_cancel", "execute").status is PermissionStatus.PENDING
+    assert perms.request_permission("event_update", "execute").status is PermissionStatus.PENDING
+    for unknown in ("calendar_create", "event_delete", "gmail_send"):
+        assert perms.request_permission(unknown, "execute").status is PermissionStatus.DENIED

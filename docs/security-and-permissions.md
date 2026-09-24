@@ -189,6 +189,16 @@ Graph facts are untrusted data in a delimited block (`docs/knowledge-graph.md`).
 never writes to the graph directly (validated typed facts through `GraphService` only), the agent
 holds no graph reference, and graph content cannot approve requests, run tools or alter policy.
 
+## Event tools and this boundary (Phase 11)
+
+Eight local event/deadline tools are registered with the manager (ONE_TIME scope, parameters bound): reads,
+`event_create` and `event_complete` are LOW (no approval); `event_update`, `event_cancel` and `event_extract` are MEDIUM and need
+the user's spoken "yes", read by code from the next message. `event_extract` reads an email, a document or a memory only after
+that yes. The model supplies words only; ids, statuses, confidences, sources, URLs, tokens, paths, commands and SQL make the
+action invalid. Source text is untrusted data: pattern-matched, sanitized, stored as a short evidence sentence, never shown to
+the brain, and replies built from it are replaced by a placeholder in the history. There is no calendar, notification or network
+code in the events layer. See `docs/event-and-deadline-intelligence.md`.
+
 ## Gmail tools and this boundary (Phase 10)
 
 Five read-only Gmail tools (`gmail_search`, `gmail_get_message`, `gmail_get_thread`, `gmail_summarize`,

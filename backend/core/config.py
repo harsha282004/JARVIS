@@ -139,6 +139,13 @@ class Settings(BaseSettings):
     # Most emails fetched by one search (JARVIS never downloads a whole mailbox).
     JARVIS_GMAIL_MAX_RESULTS: int = Field(default=10, ge=1, le=50)
 
+    # --- Event & deadline intelligence (local PostgreSQL; run the Alembic migration once) ---
+    JARVIS_EVENTS_ENABLED: bool = True
+    # How far ahead "what's coming up" looks.
+    JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS: int = Field(default=7, ge=1, le=365)
+    # Most events listed or searched at once.
+    JARVIS_EVENT_MAX_RESULTS: int = Field(default=20, ge=1, le=100)
+
     # --- Permissions & security audit ---
     # How long a permission request stays valid. Unknown tools are always denied;
     # that is an invariant, not a setting.

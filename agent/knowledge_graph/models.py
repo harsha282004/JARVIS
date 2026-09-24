@@ -37,6 +37,7 @@ class EntityType(StrEnum):
     GOAL = "goal"
     LOCATION = "location"
     TOPIC = "topic"
+    EVENT = "event"  # Phase 11: a deadline or event from the event/deadline layer
 
 
 class RelationshipType(StrEnum):
@@ -54,6 +55,7 @@ class RelationshipType(StrEnum):
     HAS_GOAL = "has_goal"
     LOCATED_IN = "located_in"
     DEPENDS_ON = "depends_on"
+    HAS_DEADLINE = "has_deadline"  # Phase 11: PROJECT/GOAL -> EVENT
 
 
 class TrustLevel(IntEnum):

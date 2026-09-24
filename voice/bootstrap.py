@@ -17,6 +17,10 @@ from agent.rag.embeddings import SentenceTransformerProvider
 from agent.rag.retriever import Retriever
 from agent.rag.service import RagLimits, RagService
 from agent.rag.store import SqlVectorStore
+from agent.events.graph import EventGraphLinker
+from agent.events.repository import EventRepository
+from agent.events.service import EventService
+from agent.events.tools import EventTool, EventToolContext, build_event_tools
 from agent.tasks.executor import TaskActionExecutor
 from agent.tasks.models import MissedPolicy, TaskPriority, utcnow
 from agent.tasks.notifications import (
@@ -207,25 +211,63 @@ def build_gmail_authenticator(settings: Settings) -> GmailAuthenticator:
     )
 
 
-def build_gmail_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[GmailTool]:
-    """The read-only Gmail tools, or none when Gmail is disabled. Building them never contacts Google and never
-    fails for missing credentials: a request then gets a clear setup message (see docs/gmail-intelligence.md).
-    Summaries use the same local LLM as everything else."""
+def build_gmail_service(settings: Settings, llm: LLMProvider) -> GmailService | None:
+    """The Gmail service, or None when Gmail is disabled. Building it never contacts Google and never fails for
+    missing credentials: a request then gets a clear setup message (see docs/gmail-intelligence.md)."""
     if not settings.JARVIS_GMAIL_ENABLED:
-        return []
+        return None
     auth = build_gmail_authenticator(settings)
-    service = GmailService(
+    return GmailService(
         HttpGmailClient(auth), llm, max_results=settings.JARVIS_GMAIL_MAX_RESULTS, is_ready=auth.is_ready
     )
-    return build_gmail_tools(GmailToolContext(service, zone, utcnow))
+
+
+def build_gmail_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[GmailTool]:
+    """The read-only Gmail tools, or none when Gmail is disabled. Summaries use the same local LLM as everything else."""
+    service = build_gmail_service(settings, llm)
+    return build_gmail_tools(GmailToolContext(service, zone, utcnow)) if service is not None else []
+
+
+def build_event_tools_for(
+    settings: Settings, zone, *, tasks=None, gmail=None, rag=None, memory=None, graph=None
+) -> list[EventTool]:
+    """The event/deadline tools, or none when events are disabled. Events live in the local database; sources
+    (Gmail, documents, memory) are only read when the user asks. Nothing here talks to any calendar."""
+    if not settings.JARVIS_EVENTS_ENABLED:
+        return []
+    events = EventService(
+        EventRepository(SessionLocal), zone=zone, tasks=tasks, max_results=settings.JARVIS_EVENT_MAX_RESULTS,
+        lookahead_days=settings.JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS,
+    )
+    context = EventToolContext(
+        events, TimeParser(zone), utcnow, tasks=tasks, gmail=gmail, rag=rag, memory=memory,
+        linker=EventGraphLinker(graph) if graph is not None else None,
+    )
+    return build_event_tools(context)
 
 
 def _build_conversation(settings: Settings, task_system: TaskSystem | None = None) -> ConversationEngine:
     llm = _build_llm(settings)
+    memory = _build_memory(settings)
+    rag = build_rag_service(settings, llm)
+    graph = build_graph_service(settings)
+    if graph is not None:
+        # Keep derived graph facts consistent with memory and the document index.
+        if memory is not None:
+            memory.add_listener(MemoryGraphSync(graph).handle)
+        if rag is not None:
+            rag.add_listener(DocumentGraphSync(graph).handle)
+
     tools = list(task_system.tools) if task_system is not None else []
-    if settings.JARVIS_GMAIL_ENABLED:
+    gmail = build_gmail_service(settings, llm)
+    if settings.JARVIS_GMAIL_ENABLED or settings.JARVIS_EVENTS_ENABLED:
         zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
-        tools += build_gmail_tools_for(settings, llm, zone)
+        if gmail is not None:
+            tools += build_gmail_tools(GmailToolContext(gmail, zone, utcnow))
+        tools += build_event_tools_for(
+            settings, zone, tasks=task_system.tasks if task_system is not None else None, gmail=gmail, rag=rag,
+            memory=memory, graph=graph,
+        )
     descriptors = [tool.descriptor() for tool in tools]
     agent = (
         AgentBrain(
@@ -237,17 +279,8 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
         if settings.JARVIS_AGENT_ENABLED
         else None
     )
-    memory = _build_memory(settings)
-    rag = build_rag_service(settings, llm)
-    graph = build_graph_service(settings)
-    if graph is not None:
-        # Keep derived graph facts consistent with memory and the document index.
-        if memory is not None:
-            memory.add_listener(MemoryGraphSync(graph).handle)
-        if rag is not None:
-            rag.add_listener(DocumentGraphSync(graph).handle)
     permissions = PermissionManager(
-        tools=[d.security_info() for d in descriptors],  # only the task/reminder tools are known; anything else is denied
+        tools=[d.security_info() for d in descriptors],  # only the registered local tools are known; anything else is denied
         audit=AuditLog(enabled=settings.JARVIS_PERMISSION_AUDIT_ENABLED),
         default_expiry_seconds=settings.JARVIS_PERMISSION_DEFAULT_EXPIRY_SECONDS,
     )

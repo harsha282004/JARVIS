@@ -194,7 +194,7 @@ class ConversationEngine:
         request = self._agent.build_request(user_message.content, context[1:-1], memory_block, graph_block)
         decision = self._agent.decide(request)
         self.last_decision = decision
-        if (decision.task_action is not None or decision.gmail_action is not None) and self._actions is not None:
+        if (decision.task_action or decision.gmail_action or decision.event_action) is not None and self._actions is not None:
             return self._carry_out_action(decision, session)
         if decision.intent is Intent.DOCUMENT_QUESTION:
             return self._answer_from_documents(
@@ -212,13 +212,14 @@ class ConversationEngine:
             return None
         self.last_decision = None
         self._action_handled = True
+        self._history_override = outcome.history_text  # replies built from email/event text stay out of the history
         self.last_permission_requests = [outcome.permission_request] if outcome.permission_request else []
         return outcome.reply
 
     def _carry_out_action(self, decision: AgentDecision, session: ConversationSession) -> str:
         """Hand a validated task/reminder action to the executor (PermissionManager -> tool -> service).
         The reply says only what actually happened."""
-        action = decision.task_action or decision.gmail_action
+        action = decision.task_action or decision.gmail_action or decision.event_action
         assert self._actions is not None and action is not None
         outcome = self._actions.execute(action, session.session_id)
         self._action_handled = True

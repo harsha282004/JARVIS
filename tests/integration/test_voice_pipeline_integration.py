@@ -325,3 +325,64 @@ def test_real_postgresql_task_and_reminder_persistence():
         cleanup = create_engine(url)
         Base.metadata.drop_all(cleanup)
         cleanup.dispose()
+
+
+@pytest.mark.integration
+def test_real_postgresql_event_persistence():
+    """Create, retrieve, update, cancel, complete, search, restart and duplicate protection against a DISPOSABLE
+    PostgreSQL database (JARVIS_TEST_DATABASE_URL). The tables are created and dropped by this test."""
+    import os
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    url = os.environ.get("JARVIS_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("JARVIS_TEST_DATABASE_URL not set (needs a disposable PostgreSQL database)")
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import backend.models.events  # noqa: F401
+    import backend.models.tasks  # noqa: F401
+    from agent.events.models import EventSource, EventStatus, EventType, SourceType
+    from agent.events.repository import EventRepository
+    from agent.events.service import EventService
+    from agent.events.temporal import EventScope
+    from backend.models.base import Base
+
+    zone = ZoneInfo("Asia/Kolkata")
+
+    def service():
+        engine = create_engine(url)
+        return engine, EventService(EventRepository(sessionmaker(bind=engine, expire_on_commit=False)), zone=zone)
+
+    engine, events = service()
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    try:
+        soon = datetime.now(timezone.utc) + timedelta(days=2)
+        src = EventSource(source_type=SourceType.GMAIL, source_id="m1", reference="email from X")
+        created = events.create_event("Internship interview", EventType.INTERVIEW, start_at=soon, source=src)
+        assert created.created and not events.create_event("Internship interview", EventType.INTERVIEW, start_at=soon, source=src).created
+        deadline = events.create_event("Report due", EventType.DEADLINE, due_at=soon + timedelta(days=1)).event
+        assert events.get_event(created.event.event_id) == created.event
+        assert [e.title for e in events.find_matching("interview")] == ["Internship interview"]
+        assert events.update_event(deadline.event_id, title="Final report due").title == "Final report due"
+        engine.dispose()
+
+        engine2, events2 = service()  # "restart"
+        assert events2.get_event(created.event.event_id) == created.event
+        assert events2.cancel_event(created.event.event_id).status is EventStatus.CANCELLED
+        assert events2.complete_event(deadline.event_id).status is EventStatus.COMPLETED
+        assert events2.list_scope(EventScope.ALL).events == []
+        engine2.dispose()
+
+        engine3, events3 = service()
+        assert events3.get_event(created.event.event_id).status is EventStatus.CANCELLED
+        assert events3.get_event(deadline.event_id).status is EventStatus.COMPLETED
+        assert not events3.create_event("Internship interview", EventType.INTERVIEW, start_at=soon, source=src).created  # still deduplicated
+        engine3.dispose()
+    finally:
+        cleanup = create_engine(url)
+        Base.metadata.drop_all(cleanup)
+        cleanup.dispose()

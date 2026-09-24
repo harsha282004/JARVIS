@@ -21,6 +21,7 @@ from agent.brain.models import (
 from agent.brain.parsing import InvalidAgentOutput, LLMDecisionOutput, parse_decision_output
 from agent.brain.prompts import RETRY_PROMPT, build_system_prompt
 from agent.planner.planner import Planner
+from agent.events.intents import EVENT_ACTION_NAMES, EventAction, InvalidEventAction, parse_event_action
 from agent.tasks.intents import InvalidTaskAction, TaskAction, parse_task_action
 from integrations.gmail.intents import (
     GMAIL_ACTION_NAMES,
@@ -144,8 +145,8 @@ class AgentBrain:
 
     def _action_decision(self, output: LLMDecisionOutput, request: AgentRequest) -> AgentDecision:
         catalog = {tool.name.lower(): tool for tool in request.tools}
-        task_action, gmail_action = self._proposed_action(output, catalog)
-        proposed = task_action or gmail_action
+        task_action, gmail_action, event_action = self._proposed_action(output, catalog)
+        proposed = task_action or gmail_action or event_action
         names = list(output.tools)
         if proposed is not None and proposed.name.value not in {n.lower() for n in names}:
             names.append(proposed.name.value)  # the action itself names the tool it needs
@@ -171,26 +172,30 @@ class AgentBrain:
             reasoning_summary=output.summary,
             task_action=task_action,
             gmail_action=gmail_action,
+            event_action=event_action,
         )
 
     @staticmethod
     def _proposed_action(
         output: LLMDecisionOutput, catalog: dict[str, ToolDescriptor]
-    ) -> tuple[TaskAction | None, GmailAction | None]:
+    ) -> tuple[TaskAction | None, GmailAction | None, EventAction | None]:
         """Validate the model's proposed action (task/reminder or Gmail). An invalid one makes the whole output
         invalid (retry, then the safe fallback). A valid action for a tool that is not available (e.g. Gmail is
         turned off) is dropped."""
         if output.action is None:
-            return None, None
+            return None, None, None
         name = output.action.get("name")
         try:
             if isinstance(name, str) and name.strip().lower() in GMAIL_ACTION_NAMES:
                 gmail = parse_gmail_action(output.action)
-                return None, (gmail if gmail.name.value in catalog else None)
+                return None, (gmail if gmail.name.value in catalog else None), None
+            if isinstance(name, str) and name.strip().lower() in EVENT_ACTION_NAMES:
+                event = parse_event_action(output.action)
+                return None, None, (event if event.name.value in catalog else None)
             task = parse_task_action(output.action)
-        except (InvalidTaskAction, InvalidGmailAction) as exc:
+        except (InvalidTaskAction, InvalidGmailAction, InvalidEventAction) as exc:
             raise InvalidAgentOutput(f"invalid action ({exc})") from None
-        return (task if task.name.value in catalog else None), None
+        return (task if task.name.value in catalog else None), None, None
 
     @staticmethod
     def _select(name: str, catalog: dict[str, ToolDescriptor]) -> ToolSelection:

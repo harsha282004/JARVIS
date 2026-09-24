@@ -19,6 +19,7 @@ import backend.models.memory  # noqa: E402,F401  (registers the table)
 import backend.models.rag  # noqa: E402,F401  (registers the tables)
 import backend.models.knowledge_graph  # noqa: E402,F401  (registers the tables)
 import backend.models.tasks  # noqa: E402,F401  (registers the tables)
+import backend.models.events  # noqa: E402,F401  (registers the table)
 
 config = context.config
 settings = get_settings()

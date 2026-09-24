@@ -176,3 +176,44 @@ def test_task_reminder_postgresql_sql_uses_timezone_aware_columns_and_cascade():
     assert "FOREIGN KEY(task_id) REFERENCES tasks (id) ON DELETE CASCADE" in sql
     assert "CREATE INDEX ix_reminders_status_scheduled_at" in sql and "CREATE INDEX ix_tasks_status_due_at" in sql
     assert "CREATE EXTENSION" not in sql
+
+
+def test_events_table_migration_indexes_unique_constraint_and_foreign_key(tmp_path):
+    from backend.models.events import EventRow
+
+    url = f"sqlite:///{tmp_path / 'events.db'}"
+    command.upgrade(alembic_config(url), "head")
+    engine = create_engine(url)
+    inspector = inspect(engine)
+    assert {c["name"] for c in inspector.get_columns("events")} == {c.name for c in EventRow.__table__.columns}
+    assert {i["name"] for i in inspector.get_indexes("events")} >= {"ix_events_status_start_at", "ix_events_status_due_at", "ix_events_task_id"}
+    assert [(u["name"], u["column_names"]) for u in inspector.get_unique_constraints("events")] == [
+        ("uq_events_source_dedupe", ["source_type", "source_id", "dedupe_key"])]
+    assert [(fk["referred_table"], fk["constrained_columns"]) for fk in inspector.get_foreign_keys("events")] == [("tasks", ["task_id"])]
+    engine.dispose()
+
+
+def test_events_migration_is_reversible_and_additive(tmp_path):
+    url = f"sqlite:///{tmp_path / 'events_down.db'}"
+    command.upgrade(alembic_config(url), "head")
+    command.downgrade(alembic_config(url), "0004_tasks_reminders")
+    engine = create_engine(url)
+    tables = set(inspect(engine).get_table_names())
+    assert "events" not in tables and {"tasks", "reminders", "kg_entities", "personal_memories", "rag_documents"} <= tables
+    engine.dispose()
+    command.upgrade(alembic_config(url), "head")  # and it applies again
+    engine = create_engine(url)
+    assert "events" in set(inspect(engine).get_table_names())
+    engine.dispose()
+
+
+def test_events_postgresql_sql_is_timezone_aware_with_provenance_and_no_extension():
+    out = io.StringIO()
+    command.upgrade(alembic_config("postgresql+psycopg2://u:p@localhost/x", out), "head", sql=True)
+    sql = out.getvalue()
+    assert "CREATE TABLE events" in sql and "start_at TIMESTAMP WITH TIME ZONE" in sql and "due_at TIMESTAMP WITH TIME ZONE" in sql
+    assert "source_type VARCHAR(16) NOT NULL" in sql and "confidence INTEGER NOT NULL" in sql
+    assert "CONSTRAINT uq_events_source_dedupe UNIQUE (source_type, source_id, dedupe_key)" in sql
+    assert "FOREIGN KEY(task_id) REFERENCES tasks (id) ON DELETE SET NULL" in sql
+    assert "CREATE INDEX ix_events_status_start_at" in sql and "CREATE EXTENSION" not in sql
+    assert "DROP TABLE" not in sql.split("CREATE TABLE events")[0].split("0004_tasks_reminders")[-1]  # no destructive change to older tables

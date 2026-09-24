@@ -37,7 +37,7 @@ def graph(session_factory, clock):
 # ---- models / vocabulary ----
 
 def test_entity_and_relationship_taxonomies_are_small_and_controlled():
-    assert {t.name for t in E} == {"PERSON", "PROJECT", "TECHNOLOGY", "ORGANIZATION", "DOCUMENT", "SKILL", "GOAL", "LOCATION", "TOPIC"}
+    assert {t.name for t in E} == {"PERSON", "PROJECT", "TECHNOLOGY", "ORGANIZATION", "DOCUMENT", "SKILL", "GOAL", "LOCATION", "TOPIC", "EVENT"}  # EVENT: Phase 11
     assert set(R) == set(ALLOWED)  # every relationship type has explicit allowed endpoints
 
 

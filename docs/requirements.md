@@ -84,6 +84,37 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 11 — Event & Deadline Intelligence
+
+### Functional requirements
+
+- A persistent `Event` model (PostgreSQL, migration `0005`) for events and deadlines with typed type/status enums,
+  timezone-aware UTC timestamps, all-day handling, priority (Phase 9 scale, never guessed), source provenance and
+  extraction confidence; deadlines kept distinct (due time, no start) and related to tasks by reference, not duplication.
+- `EventService`: create, get, update, complete, cancel, confirm, upcoming/overdue/scoped lists, search, ambiguity
+  detection, source and task association; a repository abstraction for persistence.
+- Date resolution reusing the Phase 9 parser; ambiguous or vague dates are asked about, never guessed.
+- Deterministic extraction from Gmail (Phase 10), indexed documents (Phase 7) and explicit memories (Phase 6) only when the
+  user asks; provenance kept; low-confidence results wait for confirmation; duplicate protection by source.
+- Bounded temporal reasoning (today, tomorrow, this/next week, next 7 days, overdue, countdowns) on the user's timezone.
+- Informational conflict detection (overlap, all-day); nothing is rescheduled.
+- Controlled Knowledge Graph links (`PROJECT/GOAL -> HAS_DEADLINE -> EVENT`, `EVENT -> DOCUMENTED_IN -> DOCUMENT`,
+  `PERSON -> RELATED_TO -> EVENT`) to existing entities only, with provenance.
+- AgentBrain event actions (`event_create/list/search/get/complete/cancel/update/extract`) validated strictly; the model
+  cannot supply ids; permission-gated tools (reads and creation low-risk, update/cancel/extract need the user's yes).
+- `JARVIS_EVENTS_ENABLED`, `JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS`, `JARVIS_EVENT_MAX_RESULTS`.
+
+### Non-functional requirements
+
+- External text (email, documents, memory) is untrusted data: never an instruction, never shown to the brain, never kept in
+  history; nothing executable; only short evidence stored; no content in logs.
+- No new dependencies; no calendar, network, notification or scheduler code in the events layer.
+
+### Explicitly out of scope for Phase 11
+
+Google Calendar and any calendar sync, proactive notifications, daily briefing, productivity intelligence, automation,
+remote access, a dashboard, autonomous scheduling or rescheduling, and everything out of scope earlier.
+
 ## Phase 10 — Gmail Intelligence
 
 ### Functional requirements
