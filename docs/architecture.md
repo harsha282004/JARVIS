@@ -56,6 +56,24 @@ read-only tools. The AgentBrain may propose a validated `GmailAction` (words onl
 reaches the brain and never enters the conversation history. No database table, no mailbox mirror. See
 `docs/gmail-intelligence.md`.
 
+## Phase 14 scope (Proactive intelligence)
+
+Phase 14 adds `agent/proactive/`: read-only signal sources over the existing task, event, calendar and Gmail services, a deterministic
+`NotificationPolicy` (quiet hours, cooldown, de-duplication, priority/urgency, hourly cap), and a `ProactiveEngine` that runs as an extra pass of
+the existing `ReminderScheduler` thread and delivers through the existing `DesktopNotifier`/`VoiceNotifier` (no second scheduler or notifier).
+A `proactive_notifications` table (migration 0006) gives an atomic claim (exactly one delivery per signal), cooldown and traceability. A signal is
+information only: the engine has no tool executor and no way to modify any source, and uses no language model. The AgentBrain's only involvement
+is the read-only `proactive_explain` action. See `docs/proactive-intelligence.md`.
+
+## Phase 13 scope (Messaging)
+
+Phase 13 adds `integrations/messaging/`: capability-based provider interfaces (conversations, messages, search) with a
+`ProviderRegistry`, one real provider (the official Telegram Bot API, read-only, `getMe`/`getUpdates` only) and a
+`MessagingService`. The AgentBrain may propose a validated `MessageAction` (words only, never ids, providers, URLs or text to
+send); the six tools are LOW risk and read-only. Message text is untrusted: never shown to the brain, kept out of history,
+summarized only in a delimited tool-less LLM call. Nothing is stored (no table, no migration) and nothing is created from a
+message. WhatsApp and personal-account access are not supported. See `docs/messaging-integration.md`.
+
 ## Phase 12 scope (Google Calendar)
 
 Phase 12 adds `integrations/calendar/` (a `CalendarClient` interface with an httpx implementation, a `CalendarService`,
@@ -266,6 +284,18 @@ per the JARVIS master specification.
 Google Calendar or any calendar integration or sync, proactive notifications, reminders created for events, a daily
 briefing, automatic or scheduled extraction, automatic rescheduling, recurring or multi-day events, event UI, and everything
 in the Phase 10 list below.
+
+## What Phase 14 intentionally does not implement
+
+Autonomous actions of any kind (sending, replying, modifying or rescheduling tasks/events/calendar/email), a daily briefing, productivity intelligence,
+reminder or messaging signals, a settings UI, snooze/mute, a desktop/coding agent, research or document intelligence, vision, multi-agent, remote/mobile
+access, media control, and everything in the Phase 13 list below.
+
+## What Phase 13 intentionally does not implement
+
+Sending, replying, forwarding, editing, deleting or marking messages, WhatsApp or any personal-account access, background
+monitoring or notifications, autonomous replies, automatic tasks/reminders/events/graph entries from messages, attachment
+download or indexing, a message cache or mirror, a dashboard, and everything in the Phase 12 list below.
 
 ## What Phase 12 intentionally does not implement
 

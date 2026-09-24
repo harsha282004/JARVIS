@@ -139,7 +139,7 @@ class CalendarService:
         """A temporary Phase 11 `Event` for conflict maths. It is never stored."""
         now = self._clock()
         return Event(
-            title=event.summary or "(no title)", event_type=EventType.EVENT, status=EventStatus.UPCOMING,
+            title=(event.summary or "(no title)")[:200], event_type=EventType.EVENT,  # Phase 11 titles are at most 200 characters status=EventStatus.UPCOMING,
             start_at=event.start, end_at=event.end if event.end > event.start else None, timezone=self._zone.key,
             all_day=event.all_day, created_at=now, updated_at=now, metadata={"calendar_event_id": event.event_id},
         )

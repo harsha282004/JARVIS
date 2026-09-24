@@ -10,10 +10,14 @@ not recorded and is retried on later polls. The first tick runs immediately at s
 which is how reminders that came due while JARVIS was not running are handled
 (missed-reminder policy). The scheduler never touches the VoiceEngine or audio;
 it only calls the notification abstraction.
+
+Phase 14 reuses this one thread instead of adding a second scheduler: `extra_passes` are extra callables (the proactive
+engine's `run_once`) run after the reminder pass on every poll. A failing extra pass is logged and never affects
+reminders, and reminders may be disabled while an extra pass still runs (`reminders=None`).
 """
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 
 from agent.tasks.formatting import format_when
@@ -33,9 +37,10 @@ BATCH_SIZE = 50
 class ReminderScheduler:
     def __init__(
         self,
-        reminders: ReminderService,
-        notifier: NotificationService,
+        reminders: ReminderService | None,
+        notifier: NotificationService | None,
         *,
+        extra_passes: Sequence[Callable[[], object]] = (),
         tasks: TaskService | None = None,
         poll_seconds: float = 15.0,
         missed_policy: MissedPolicy = MissedPolicy.NOTIFY,
@@ -47,6 +52,7 @@ class ReminderScheduler:
         self._reminders = reminders
         self._notifier = notifier
         self._tasks = tasks
+        self._extra_passes = list(extra_passes)
         self._poll = poll_seconds
         self._policy = missed_policy
         self._grace = timedelta(seconds=missed_grace_seconds)
@@ -103,17 +109,30 @@ class ReminderScheduler:
         """One scheduling pass (also called directly by tests). Returns how many reminders were delivered.
         Raises on a database failure so the loop can back off."""
         now = self._clock()
-        if self._tasks is not None:
-            self._tasks.mark_overdue(now)
         delivered = 0
-        for due in self._reminders.find_due_reminders(now, BATCH_SIZE):
-            if self._stop.is_set():
-                break
-            claimed = self._reminders.claim_delivery(due.reminder_id, now)
-            if claimed is None:
-                continue  # another caller took it, or it was cancelled
-            delivered += self._deliver(claimed, now)
+        try:
+            if self._tasks is not None:
+                self._tasks.mark_overdue(now)
+            if self._reminders is not None:
+                for due in self._reminders.find_due_reminders(now, BATCH_SIZE):
+                    if self._stop.is_set():
+                        break
+                    claimed = self._reminders.claim_delivery(due.reminder_id, now)
+                    if claimed is None:
+                        continue  # another caller took it, or it was cancelled
+                    delivered += self._deliver(claimed, now)
+        finally:
+            self._run_extra_passes()
         return delivered
+
+    def _run_extra_passes(self) -> None:
+        for extra in self._extra_passes:
+            if self._stop.is_set():
+                return
+            try:
+                extra()
+            except Exception as exc:  # noqa: BLE001 - an extra pass must never affect reminders or stop the thread
+                logger.error("Scheduler extra pass failed (%s)", type(exc).__name__)
 
     def _deliver(self, claimed: Reminder, now: datetime) -> int:
         missed = now - claimed.scheduled_at > self._grace
@@ -121,6 +140,7 @@ class ReminderScheduler:
             self._reminders.expire_missed(claimed, now)
             logger.info("Missed reminder expired (reminder=%s)", claimed.reminder_id)
             return 0
+        assert self._notifier is not None  # reminders are only delivered when a notifier was given
         try:
             self._notifier.notify(self._text(claimed, missed, now), {
                 "reminder_id": claimed.reminder_id, "task_id": claimed.task_id, "missed": missed,

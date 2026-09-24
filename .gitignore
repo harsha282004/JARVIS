@@ -6,6 +6,7 @@ credentials.json
 token.json
 gmail_token*.json
 calendar_token*.json
+telegram_token*
 .env
 .env.*
 !.env.example

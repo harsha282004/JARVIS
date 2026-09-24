@@ -84,6 +84,52 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 14 — Proactive Intelligence
+
+### Functional requirements
+
+- A typed `ProactiveSignal` and `NotificationCandidate`; signals only from real Phase 0-13 sources (tasks, Phase 11 events/deadlines, Google Calendar, opt-in Gmail).
+- A centralized deterministic `NotificationPolicy`: expiry, duplicate suppression, confidence, priority, quiet hours (critical+immediate to the tray only), cooldown
+  (with escalation and meaningful-change exceptions), an hourly cap, and channel selection.
+- Priority reuses `TaskPriority`; urgency is derived from time only; stable keys and time tiers prevent repeated notifications.
+- Delivery through the existing tray and voice-queue notifiers on the existing scheduler thread; atomic claim so exactly one delivery wins; failed deliveries retry with bounded backoff.
+- Source traceability and a read-only `proactive_explain` action; `JARVIS_PROACTIVE_*` settings; a disable switch that leaves reminders untouched.
+- A reversible migration (`0006_proactive`) for the notification history.
+
+### Non-functional requirements
+
+- The engine only reads and notifies: no PermissionManager bypass, no tool execution, no modification of any source, no LLM. No email or message bodies stored or logged.
+- One source failing never stops the runtime; no continuous polling of external APIs; no new dependencies.
+
+### Explicitly out of scope for Phase 14
+
+Autonomous actions, daily briefing, productivity intelligence, settings UI, snooze, reminder/messaging/memory signals, and everything out of scope earlier.
+
+## Phase 13 — Messaging Integration
+
+### Functional requirements
+
+- A capability-based provider abstraction and registry; unsupported capabilities are reported, never faked; no send/edit/delete capability.
+- JARVIS-owned message, conversation and attachment-metadata models; raw provider objects never reach the AgentBrain.
+- One real provider: the official Telegram Bot API (read-only; `getMe`, `getUpdates` without an offset). WhatsApp and personal-account
+  access are documented as unsupported; no scraping or unofficial automation.
+- Bounded retrieval, structured search (native when available, otherwise local over the recent window), conversation retrieval.
+- Grounded summaries, rule-based classification and action-request/deadline detection; nothing is created from a message.
+- Strict AgentBrain actions (`message_list`, `message_search`, `message_get`, `conversation_list`, `conversation_get`,
+  `message_summarize`); the model can never supply ids, providers, URLs, tokens, cookies, commands, SQL or text to send.
+- LOW-risk, read-only, PermissionManager-gated tools; everything else is denied.
+- `JARVIS_MESSAGING_ENABLED`, `JARVIS_MESSAGING_MAX_RESULTS`, `JARVIS_MESSAGING_TELEGRAM_TOKEN_PATH`, `MESSAGING_TELEGRAM_BOT_TOKEN`.
+
+### Non-functional requirements
+
+- Message content is untrusted data: sanitized, delimited, never shown to the brain, kept out of history; no message text or token in logs.
+- No database table or migration; no polling or background monitoring; no new dependencies.
+
+### Explicitly out of scope for Phase 13
+
+Sending/replying/editing/deleting messages, WhatsApp, proactive monitoring or notifications, briefing,
+autonomous replies, dashboard, and everything out of scope earlier.
+
 ## Phase 12 — Google Calendar Integration
 
 ### Functional requirements

@@ -3,9 +3,20 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 12 — Google Calendar Integration
+## Current status: Phase 14 — Proactive Intelligence
 
-Phases 0-11 are complete. Phase 12 connects JARVIS to your Google Calendar (OAuth desktop flow, scopes `calendar.events` and
+Phases 0-13 are complete. Phase 14 lets JARVIS tell you, on its own, when something in your existing sources deserves
+attention: a task is due soon or overdue, a deadline, interview or calendar meeting is approaching, two calendar events overlap, or an
+email seems to need action (observe -> analyze -> decide -> notify; it never acts, sends or modifies anything). A deterministic
+policy applies quiet hours, cooldown, de-duplication, priority and urgency; delivery reuses the existing tray and voice channels and
+the existing scheduler thread. Ask "why did you notify me?" for the reason and source. Off by default: follow
+`docs/proactive-intelligence.md` and run `alembic -c database/alembic.ini upgrade head` once. Phase 13 lets JARVIS read, search and summarize messages, **read-only**, through a provider
+abstraction. The only real provider is the official **Telegram Bot API**: it reads messages sent to a bot you create with
+BotFather (and groups the bot joined), not your personal chats. **WhatsApp is not supported** (no official personal-account API;
+no scraping or unofficial automation). Ask "check my latest messages", "what is John asking me", "summarize the project group".
+Message text is untrusted data (never shown to the agent brain or kept in history), nothing is sent, edited, deleted or
+monitored in the background, and no task or event is created from a message. Off by default: follow
+`docs/messaging-integration.md`. Phase 12 connects JARVIS to your Google Calendar (OAuth desktop flow, scopes `calendar.events` and
 `calendar.calendarlist.readonly`): list calendars, read and search events, event details, and create, update and cancel events
 ("What's on my calendar tomorrow?", "Move my project meeting to 4 PM", "Cancel Thursday's interview"). Reads need no approval;
 every change needs your spoken yes, bound to the exact event. Nobody is ever invited or emailed, overlaps are reported and
@@ -69,8 +80,8 @@ the voice engine as a persistent Windows background app with a system-tray
 icon (status, pause/resume, restart, exit), graceful shutdown, sleep/resume
 recovery, and optional start-with-Windows. Phase 1 provides a functional local
 voice pipeline: say "Hey JARVIS", ask a question, get a spoken answer from
-a local LLM via Ollama. **The only tools are the local task/reminder ones, the read-only Gmail ones, the local event/deadline ones and the Google Calendar ones; other integrations
-(Calendar, messaging, ...), proactive features, installer/packaging and the frontend
+a local LLM via Ollama. **The only tools are the local task/reminder ones, the read-only Gmail ones, the local event/deadline ones and the Google Calendar ones and the read-only messaging ones; other integrations
+(more messaging platforms, ...), proactive features, installer/packaging and the frontend
 are not implemented yet.** Conversation history itself is in memory
 only and is lost on exit; durable knowledge lives in personal memory, RAG and
 the knowledge graph.
@@ -82,7 +93,7 @@ voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/security-and-permissions.md` for the permission layer,
 `docs/personal-memory.md` for personal memory,
 `docs/personal-rag.md` for personal RAG,
-`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, `docs/gmail-intelligence.md` for Gmail, `docs/event-and-deadline-intelligence.md` for events and deadlines, `docs/google-calendar-integration.md` for Google Calendar, and `docs/requirements.md` for what each
+`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, `docs/gmail-intelligence.md` for Gmail, `docs/event-and-deadline-intelligence.md` for events and deadlines, `docs/google-calendar-integration.md` for Google Calendar, `docs/messaging-integration.md` for messaging, `docs/proactive-intelligence.md` for proactive notifications, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -103,13 +114,13 @@ phase does and does not cover.
 backend/        FastAPI application (API, core incl. LLM + conversation engine, models, services)
 agent/          brain + planner (decision/plan only), personal memory, RAG, knowledge graph, tasks/reminders and events/deadlines (implemented); tools (interface + the local task/reminder tools); orchestrator (empty)
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
-integrations/   External-service boundary: gmail, calendar, messaging, ... (interfaces only)
+integrations/   External-service boundary: gmail, calendar and messaging (Telegram Bot API, read-only) implemented; others empty
 desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) — implemented
 frontend/       React/Tailwind dashboard (not implemented)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
 docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph, tasks-and-reminders, event-and-deadline-intelligence docs
-scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py, kg_cli.py, gmail_cli.py, calendar_cli.py)
+scripts/        Operational scripts (check_db.py, run_voice.py, rag_cli.py, kg_cli.py, gmail_cli.py, calendar_cli.py, messaging_cli.py)
 ```
 
 Every future component (LLM provider, tool, integration, memory backend,
@@ -187,9 +198,9 @@ lifecycle, startup integration, troubleshooting and limitations.
   declined because no such tools exist; classification quality depends on the local model.
 - Runtime: no installer or Windows service; no external control besides the
   tray/Ctrl+C; sleep is detected after the fact (see the runtime doc).
-- JARVIS has no messaging, Gmail is read-only (no sending or changing mail), and Calendar never sends invitations — it will say so
-  if asked, rather than inventing an answer. Gmail and Calendar were not verified here against a real account unless the
-  gated integration tests ran (see docs/google-calendar-integration.md).
+- Messaging is read-only and Telegram-bot-only (no WhatsApp, no personal chats, no sending), Gmail is read-only and Calendar never
+  sends invitations — JARVIS will say so if asked, rather than inventing an answer. Gmail, Calendar and Telegram were not verified
+  here against a real account unless the gated integration tests ran (see the integration docs).
 
 ## Security model
 
@@ -202,7 +213,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders and Phase 10 read-only Gmail and Phase 11 event & deadline intelligence and Phase 12 Google Calendar. Later phases — more tools, the approval UI,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders and Phase 10 read-only Gmail and Phase 11 event & deadline intelligence and Phase 12 Google Calendar and Phase 13 read-only messaging and Phase 14 proactive notifications. Later phases — more tools, the approval UI,
 integrations (messaging and others), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

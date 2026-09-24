@@ -36,7 +36,7 @@ Windows runtime --> ReminderScheduler (one thread) --> ReminderService -------+
 | `matching.py` | identifies "my JARVIS documentation task" from words (never from an id) |
 | `intents.py` | the validated `TaskAction` the model may propose (models only) |
 | `tools.py`, `executor.py` | the tools and the permission-gated executor |
-| `notifications.py`, `scheduler.py` | `NotificationService` implementations, `ReminderScheduler` |
+| `notifications.py`, `scheduler.py` | `NotificationService` implementations, `ReminderScheduler` (Phase 14 runs the proactive engine as an extra pass on this same thread; reminders are unchanged and are never re-delivered by it) |
 | `backend/models/tasks.py` | `tasks` and `reminders` tables |
 | `database/migrations/versions/0004_*` | Alembic migration |
 

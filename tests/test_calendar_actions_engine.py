@@ -831,3 +831,12 @@ def test_the_brain_and_events_layer_cannot_reach_calendar_services():
         assert not re.search(r"^\s*(from|import)\s+integrations\.calendar\.(client|auth|service|tools|sync|parser)", text, re.M), name
     for path in (ROOT / "agent" / "events").glob("*.py"):
         assert "integrations.calendar" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_a_calendar_title_longer_than_the_event_limit_still_converts_for_conflict_maths(stack):
+    long_title = "Weekly sync " + "very long title " * 30  # Google allows long titles; Phase 11 events hold at most 200 characters
+    s = stack(events=[cal_event("long1", long_title, ist(2030, 3, 5, 10), ist(2030, 3, 5, 11)), cal_event("long2", "Lab review", ist(2030, 3, 5, 10, 30), ist(2030, 3, 5, 11, 30))])
+    events = s.client.events.values()
+    internal = s.service.to_internal(next(iter(events)))
+    assert len(internal.title) <= 200
+    assert len(s.service.conflicts_among(list(events))) == 1  # the overlap is still found

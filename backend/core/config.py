@@ -150,6 +150,39 @@ class Settings(BaseSettings):
     # Most events read per calendar in one request (JARVIS never downloads a whole calendar).
     JARVIS_CALENDAR_MAX_RESULTS: int = Field(default=20, ge=1, le=100)
 
+    # --- Messaging (read-only; off until you set it up, see docs/messaging-integration.md) ---
+    # The only supported provider is the official Telegram Bot API: it reads messages sent to a bot you create with
+    # BotFather (and groups the bot is added to), never your personal Telegram or WhatsApp chats.
+    JARVIS_MESSAGING_ENABLED: bool = False
+    # The bot token from BotFather, as an alternative to the file below. `.env` is git-ignored; never printed or logged.
+    MESSAGING_TELEGRAM_BOT_TOKEN: SecretStr = SecretStr("")
+    JARVIS_MESSAGING_TELEGRAM_TOKEN_PATH: str = ".jarvis/messaging/telegram_token"
+    # Most messages read or spoken per request (JARVIS never downloads a whole history).
+    JARVIS_MESSAGING_MAX_RESULTS: int = Field(default=20, ge=1, le=100)
+
+    # --- Proactive intelligence (Phase 14; see docs/proactive-intelligence.md; run the Alembic migration once) ---
+    # OBSERVE -> ANALYZE -> DECIDE -> NOTIFY: JARVIS may tell you about a due task, an approaching event or deadline, a
+    # calendar conflict or an email that needs attention, through the existing tray/voice channels. It only notifies;
+    # it never acts. Off by default. Existing reminders keep working whether this is on or off.
+    JARVIS_PROACTIVE_ENABLED: bool = False
+    # How often the engine looks (it runs inside the existing reminder scheduler thread and throttles itself).
+    JARVIS_PROACTIVE_POLL_SECONDS: float = Field(default=60.0, ge=10.0, le=3600.0)
+    # How far ahead a task or deadline may start to notify (the first tier); tighter tiers are fixed at 1 hour / 15 minutes.
+    JARVIS_PROACTIVE_LOOKAHEAD_MINUTES: int = Field(default=1440, ge=15, le=10080)
+    # The same source is not notified again within this time unless it became more urgent.
+    JARVIS_PROACTIVE_COOLDOWN_MINUTES: int = Field(default=60, ge=0, le=1440)
+    # Quiet hours: nothing is delivered (it waits) except a CRITICAL + IMMEDIATE item, to the tray only. HH:MM, local time.
+    JARVIS_PROACTIVE_QUIET_HOURS_ENABLED: bool = True
+    JARVIS_PROACTIVE_QUIET_START: str = "23:00"
+    JARVIS_PROACTIVE_QUIET_END: str = "07:00"
+    # At most this many proactive notifications per hour (IMMEDIATE ones are exempt).
+    JARVIS_PROACTIVE_MAX_PER_HOUR: int = Field(default=6, ge=1, le=60)
+    # Google Calendar / Gmail are read in the background at most this often (minutes).
+    JARVIS_PROACTIVE_EXTERNAL_POLL_MINUTES: float = Field(default=10.0, ge=5.0, le=240.0)
+    # Which external sources may be observed (each also needs its own integration enabled and set up).
+    JARVIS_PROACTIVE_CALENDAR: bool = True
+    JARVIS_PROACTIVE_GMAIL: bool = False
+
     # --- Event & deadline intelligence (local PostgreSQL; run the Alembic migration once) ---
     JARVIS_EVENTS_ENABLED: bool = True
     # How far ahead "what's coming up" looks.
@@ -170,6 +203,15 @@ class Settings(BaseSettings):
     JARVIS_RUNTIME_ENABLED: bool = True
     # false = run without a tray icon (headless; stop with Ctrl+C).
     JARVIS_TRAY_ENABLED: bool = True
+
+    @field_validator("JARVIS_PROACTIVE_QUIET_START", "JARVIS_PROACTIVE_QUIET_END")
+    @classmethod
+    def _valid_clock(cls, value: str) -> str:
+        value = value.strip()
+        hours, _, minutes = value.partition(":")
+        if not (hours.isdigit() and minutes.isdigit() and len(minutes) == 2 and int(hours) < 24 and int(minutes) < 60):
+            raise ValueError("quiet hours must be written as HH:MM, for example 23:00")
+        return f"{int(hours):02d}:{minutes}"
 
     @field_validator("JARVIS_TIMEZONE")
     @classmethod

@@ -35,6 +35,18 @@ from integrations.gmail.intents import (
     InvalidGmailAction,
     parse_gmail_action,
 )
+from integrations.messaging.intents import (
+    MESSAGE_ACTION_NAMES,
+    InvalidMessageAction,
+    MessageAction,
+    parse_message_action,
+)
+from agent.proactive.intents import (
+    PROACTIVE_ACTION_NAMES,
+    InvalidProactiveAction,
+    ProactiveAction,
+    parse_proactive_action,
+)
 from agent.tools.base import ToolDescriptor
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.messages import Message, Role
@@ -151,8 +163,8 @@ class AgentBrain:
 
     def _action_decision(self, output: LLMDecisionOutput, request: AgentRequest) -> AgentDecision:
         catalog = {tool.name.lower(): tool for tool in request.tools}
-        task_action, gmail_action, event_action, calendar_action = self._proposed_action(output, catalog)
-        proposed = task_action or gmail_action or event_action or calendar_action
+        task_action, gmail_action, event_action, calendar_action, message_action, proactive_action = self._proposed_action(output, catalog)
+        proposed = task_action or gmail_action or event_action or calendar_action or message_action or proactive_action
         names = list(output.tools)
         if proposed is not None and proposed.name.value not in {n.lower() for n in names}:
             names.append(proposed.name.value)  # the action itself names the tool it needs
@@ -180,32 +192,40 @@ class AgentBrain:
             gmail_action=gmail_action,
             event_action=event_action,
             calendar_action=calendar_action,
+            message_action=message_action,
+            proactive_action=proactive_action,
         )
 
     @staticmethod
     def _proposed_action(
         output: LLMDecisionOutput, catalog: dict[str, ToolDescriptor]
-    ) -> tuple[TaskAction | None, GmailAction | None, EventAction | None, CalendarAction | None]:
+    ) -> tuple[TaskAction | None, GmailAction | None, EventAction | None, CalendarAction | None, MessageAction | None, ProactiveAction | None]:
         """Validate the model's proposed action (task/reminder or Gmail). An invalid one makes the whole output
         invalid (retry, then the safe fallback). A valid action for a tool that is not available (e.g. Gmail is
         turned off) is dropped."""
         if output.action is None:
-            return None, None, None, None
+            return None, None, None, None, None, None
         name = output.action.get("name")
         try:
             if isinstance(name, str) and name.strip().lower() in GMAIL_ACTION_NAMES:
                 gmail = parse_gmail_action(output.action)
-                return None, (gmail if gmail.name.value in catalog else None), None, None
+                return None, (gmail if gmail.name.value in catalog else None), None, None, None, None
             if isinstance(name, str) and name.strip().lower() in EVENT_ACTION_NAMES:
                 event = parse_event_action(output.action)
-                return None, None, (event if event.name.value in catalog else None), None
+                return None, None, (event if event.name.value in catalog else None), None, None, None
             if isinstance(name, str) and name.strip().lower() in CALENDAR_ACTION_NAMES:
                 calendar = parse_calendar_action(output.action)
-                return None, None, None, (calendar if calendar.name.value in catalog else None)
+                return None, None, None, (calendar if calendar.name.value in catalog else None), None, None
+            if isinstance(name, str) and name.strip().lower() in MESSAGE_ACTION_NAMES:
+                message = parse_message_action(output.action)
+                return None, None, None, None, (message if message.name.value in catalog else None), None
+            if isinstance(name, str) and name.strip().lower() in PROACTIVE_ACTION_NAMES:
+                proactive = parse_proactive_action(output.action)
+                return None, None, None, None, None, (proactive if proactive.name.value in catalog else None)
             task = parse_task_action(output.action)
-        except (InvalidTaskAction, InvalidGmailAction, InvalidEventAction, InvalidCalendarAction) as exc:
+        except (InvalidTaskAction, InvalidGmailAction, InvalidEventAction, InvalidCalendarAction, InvalidMessageAction, InvalidProactiveAction) as exc:
             raise InvalidAgentOutput(f"invalid action ({exc})") from None
-        return (task if task.name.value in catalog else None), None, None, None
+        return (task if task.name.value in catalog else None), None, None, None, None, None
 
     @staticmethod
     def _select(name: str, catalog: dict[str, ToolDescriptor]) -> ToolSelection:

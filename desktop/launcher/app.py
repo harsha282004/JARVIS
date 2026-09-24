@@ -57,7 +57,7 @@ class JarvisApplication:
             self._shutdown()
 
     def _start_scheduler(self) -> None:
-        """Reminders are independent of the voice engine: a scheduler problem never stops JARVIS."""
+        """Reminders and proactive checks are independent of the voice engine: a scheduler problem never stops JARVIS."""
         if self._scheduler is None:
             return
         try:

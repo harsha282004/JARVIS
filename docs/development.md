@@ -60,6 +60,20 @@ See `docs/event-and-deadline-intelligence.md`. Apply the schema with `alembic -c
 scripted LLM and doubles for Gmail/documents/memory; set `JARVIS_TEST_DATABASE_URL` to a **disposable** PostgreSQL database to
 also run them there and the real-PostgreSQL test in `tests/integration`. No new dependencies.
 
+## Proactive intelligence (Phase 14)
+
+See `docs/proactive-intelligence.md`. Run `alembic -c database/alembic.ini upgrade head` once (creates `proactive_notifications`), set
+`JARVIS_PROACTIVE_ENABLED=true`, and start JARVIS with `python -m desktop.launcher`; the engine runs on the existing scheduler thread. Tests
+(`tests/test_proactive_*.py`) need no account; `tests/integration/test_proactive_real.py` uses real threads and a SQLite file, and its real Windows tray
+test runs only with `JARVIS_REAL_TRAY_TEST=1` (it shows a notification balloon).
+
+## Messaging (Phase 13)
+
+See `docs/messaging-integration.md`. Create a Telegram bot with BotFather, save its token to
+`.jarvis/messaging/telegram_token` (or `MESSAGING_TELEGRAM_BOT_TOKEN` in `.env`), set `JARVIS_MESSAGING_ENABLED=true`, message the bot,
+then `python scripts/messaging_cli.py status|check|conversations`. Tests (`tests/test_messaging_*.py`) need no account; the real test
+(`tests/integration/test_telegram_real.py`) is read-only and skips without a token.
+
 ## Google Calendar (Phase 12)
 
 See `docs/google-calendar-integration.md`. Enable the Google Calendar API on the same Cloud project, reuse the Desktop client

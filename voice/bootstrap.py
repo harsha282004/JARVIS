@@ -32,6 +32,12 @@ from agent.tasks.notifications import (
 )
 from agent.tasks.repository import TaskRepository
 from agent.tasks.scheduler import ReminderScheduler
+from agent.proactive.engine import ProactiveEngine
+from agent.proactive.models import Channel
+from agent.proactive.policy import NotificationPolicy, PolicyConfig, parse_clock
+from agent.proactive.repository import NotificationRepository
+from agent.proactive.sources import CalendarSignalSource, EventSignalSource, GmailSignalSource, SignalSource, TaskSignalSource
+from agent.proactive.tools import ProactiveExplainTool, ProactiveToolContext, build_proactive_tools
 from agent.tasks.service import ReminderService, TaskService
 from agent.tasks.system import TaskSystem
 from agent.tasks.timeparse import TimeParser
@@ -42,6 +48,10 @@ from integrations.calendar.client import HttpCalendarClient
 from integrations.calendar.service import CalendarService
 from integrations.calendar.sync import CalendarEventSync
 from integrations.calendar.tools import CalendarTool, CalendarToolContext, build_calendar_tools
+from integrations.messaging.base import ProviderRegistry
+from integrations.messaging.service import MessagingService
+from integrations.messaging.telegram import TelegramProvider
+from integrations.messaging.tools import MessagingTool, MessagingToolContext, build_messaging_tools
 from integrations.gmail.auth import GmailAuthenticator
 from integrations.gmail.client import HttpGmailClient
 from integrations.gmail.service import GmailService
@@ -176,27 +186,87 @@ def build_task_system(settings: Settings, clock=utcnow) -> TaskSystem | None:
 
 
 def build_reminder_scheduler(
-    settings: Settings, system: TaskSystem | None, desktop_send=None
+    settings: Settings, system: TaskSystem | None, desktop_send=None, proactive: ProactiveEngine | None = None
 ) -> ReminderScheduler | None:
-    """The scheduler for `system`. `desktop_send(title, message)` shows a local desktop notification (the tray's).
-    None when reminders are off or no notification channel is enabled (they could never be delivered)."""
-    if system is None or system.reminders is None:
-        return None
-    channels: list[tuple[str, NotificationService]] = []
-    if settings.JARVIS_REMINDER_DESKTOP_NOTIFICATIONS and desktop_send is not None:
-        channels.append(("desktop", DesktopNotifier(desktop_send)))
-    if settings.JARVIS_REMINDER_VOICE_NOTIFICATIONS:
-        channels.append(("voice", VoiceNotifier(system.announcements)))
-    if not channels:
-        logger.warning("No reminder notification channel is available; the reminder scheduler is not started")
+    """The one scheduler thread. `desktop_send(title, message)` shows a local desktop notification (the tray's).
+    Reminders need reminders enabled and a notification channel. The proactive engine (Phase 14) runs as an extra pass on
+    the same thread, so there is no second scheduler; if reminders are off but proactive is on, the thread still runs it."""
+    reminders = system.reminders if system is not None else None
+    extra = [proactive.run_once] if proactive is not None else []
+    notifier: NotificationService | None = None
+    if reminders is not None:
+        channels: list[tuple[str, NotificationService]] = []
+        if settings.JARVIS_REMINDER_DESKTOP_NOTIFICATIONS and desktop_send is not None:
+            channels.append(("desktop", DesktopNotifier(desktop_send)))
+        if settings.JARVIS_REMINDER_VOICE_NOTIFICATIONS:
+            channels.append(("voice", VoiceNotifier(system.announcements)))
+        if channels:
+            notifier = CompositeNotifier(channels)
+        else:
+            logger.warning("No reminder notification channel is available; reminders will not be delivered")
+            reminders = None
+    if reminders is None and not extra:
         return None
     return ReminderScheduler(
-        system.reminders,
-        CompositeNotifier(channels),
-        tasks=system.tasks,
+        reminders,
+        notifier,
+        tasks=system.tasks if system is not None and reminders is not None else None,
+        extra_passes=extra,
         poll_seconds=settings.JARVIS_REMINDER_POLL_SECONDS,
         missed_policy=MissedPolicy(settings.JARVIS_MISSED_REMINDER_POLICY),
     )
+
+
+def build_proactive_engine(settings: Settings, system: TaskSystem | None, desktop_send=None, clock=utcnow) -> ProactiveEngine | None:
+    """The proactive engine, or None when it is disabled or has nothing to observe or no channel to notify through.
+    It reuses the existing services and the existing tray/voice notifiers; it creates no second scheduler or notifier."""
+    if not settings.JARVIS_PROACTIVE_ENABLED:
+        return None
+    try:
+        zone = system.parser.zone if system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
+        config = PolicyConfig(
+            enabled=True, quiet_hours_enabled=settings.JARVIS_PROACTIVE_QUIET_HOURS_ENABLED,
+            quiet_start=parse_clock(settings.JARVIS_PROACTIVE_QUIET_START), quiet_end=parse_clock(settings.JARVIS_PROACTIVE_QUIET_END),
+            cooldown_minutes=settings.JARVIS_PROACTIVE_COOLDOWN_MINUTES, lookahead_minutes=settings.JARVIS_PROACTIVE_LOOKAHEAD_MINUTES,
+            max_per_hour=settings.JARVIS_PROACTIVE_MAX_PER_HOUR,
+        )
+    except Exception as exc:  # noqa: BLE001 - proactive is optional; the assistant is not
+        logger.error("Proactive intelligence is unavailable (%s)", type(exc).__name__)
+        return None
+    lookahead = config.lookahead_minutes
+    refresh = settings.JARVIS_PROACTIVE_EXTERNAL_POLL_MINUTES
+    sources: list[SignalSource] = []
+    if system is not None and system.tasks is not None:
+        sources.append(TaskSignalSource(system.tasks, lookahead))
+    calendar = build_calendar_service(settings, zone) if settings.JARVIS_PROACTIVE_CALENDAR else None
+    if settings.JARVIS_EVENTS_ENABLED:
+        events = build_event_service(settings, zone, system.tasks if system is not None else None)
+        sources.append(EventSignalSource(events, lookahead, calendar_active=calendar is not None))
+    if calendar is not None:
+        sources.append(CalendarSignalSource(calendar, lookahead, refresh))
+    if settings.JARVIS_PROACTIVE_GMAIL:
+        gmail = build_gmail_service(settings, _build_llm(settings))
+        if gmail is not None:
+            sources.append(GmailSignalSource(gmail, refresh))
+    notifiers: dict[Channel, NotificationService] = {}
+    if settings.JARVIS_REMINDER_DESKTOP_NOTIFICATIONS and desktop_send is not None:
+        notifiers[Channel.DESKTOP] = DesktopNotifier(desktop_send, title="JARVIS")
+    if settings.JARVIS_REMINDER_VOICE_NOTIFICATIONS and system is not None:
+        notifiers[Channel.VOICE] = VoiceNotifier(system.announcements)
+    if not sources or not notifiers:
+        logger.warning("Proactive intelligence has %s; it is not started", "nothing to observe" if not sources else "no notification channel")
+        return None
+    return ProactiveEngine(
+        sources, NotificationPolicy(config, zone), NotificationRepository(SessionLocal), notifiers, zone, clock=clock,
+        interval_seconds=settings.JARVIS_PROACTIVE_POLL_SECONDS,
+    )
+
+
+def build_proactive_tools_for(settings: Settings, zone) -> list[ProactiveExplainTool]:
+    """The read-only "why did you notify me?" tool, or none when proactive intelligence is disabled."""
+    if not settings.JARVIS_PROACTIVE_ENABLED:
+        return []
+    return build_proactive_tools(ProactiveToolContext(NotificationRepository(SessionLocal), zone, utcnow))
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -233,6 +303,35 @@ def build_gmail_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[Gm
     return build_gmail_tools(GmailToolContext(service, zone, utcnow)) if service is not None else []
 
 
+def _telegram_token_source(settings: Settings):
+    """The bot token: MESSAGING_TELEGRAM_BOT_TOKEN, else the token file. Read on demand, never logged or cached in text."""
+
+    def read() -> str:
+        value = settings.MESSAGING_TELEGRAM_BOT_TOKEN.get_secret_value().strip()
+        if value:
+            return value
+        path = _project_path(settings.JARVIS_MESSAGING_TELEGRAM_TOKEN_PATH)
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
+    return read
+
+
+def build_messaging_registry(settings: Settings) -> ProviderRegistry:
+    """The real providers. Only Telegram (official Bot API, read-only) exists; nothing else is ever registered."""
+    registry = ProviderRegistry()
+    registry.register(TelegramProvider(_telegram_token_source(settings)))
+    return registry
+
+
+def build_messaging_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[MessagingTool]:
+    """The read-only messaging tools, or none when messaging is disabled. Building them never contacts a provider and
+    never fails for a missing token: a request then gets a clear setup message (docs/messaging-integration.md)."""
+    if not settings.JARVIS_MESSAGING_ENABLED:
+        return []
+    service = MessagingService(build_messaging_registry(settings), llm, max_results=settings.JARVIS_MESSAGING_MAX_RESULTS)
+    return build_messaging_tools(MessagingToolContext(service, TimeParser(zone), utcnow))
+
+
 def build_event_service(settings: Settings, zone, tasks=None) -> EventService | None:
     if not settings.JARVIS_EVENTS_ENABLED:
         return None
@@ -253,15 +352,20 @@ def build_calendar_authenticator(settings: Settings) -> CalendarAuthenticator:
     )
 
 
+def build_calendar_service(settings: Settings, zone) -> CalendarService | None:
+    """The Google Calendar service, or None when Calendar is disabled. Never contacts Google when built."""
+    if not settings.JARVIS_CALENDAR_ENABLED:
+        return None
+    auth = build_calendar_authenticator(settings)
+    return CalendarService(HttpCalendarClient(auth, zone=zone), zone=zone, max_results=settings.JARVIS_CALENDAR_MAX_RESULTS, is_ready=auth.is_ready)
+
+
 def build_calendar_tools_for(settings: Settings, zone, *, events: EventService | None = None) -> list[CalendarTool]:
     """The Google Calendar tools, or none when Calendar is disabled. Building them never contacts Google and never fails
     for missing credentials: a request then gets a clear setup message (docs/google-calendar-integration.md)."""
-    if not settings.JARVIS_CALENDAR_ENABLED:
+    service = build_calendar_service(settings, zone)
+    if service is None:
         return []
-    auth = build_calendar_authenticator(settings)
-    service = CalendarService(
-        HttpCalendarClient(auth, zone=zone), zone=zone, max_results=settings.JARVIS_CALENDAR_MAX_RESULTS, is_ready=auth.is_ready
-    )
     context = CalendarToolContext(
         service, TimeParser(zone), utcnow, sync=CalendarEventSync(service, events), lookahead_days=settings.JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS
     )
@@ -307,6 +411,12 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
             settings, zone, tasks=tasks_service, gmail=gmail, rag=rag, memory=memory, graph=graph, events=events_service,
         )
         tools += build_calendar_tools_for(settings, zone, events=events_service)
+    if settings.JARVIS_MESSAGING_ENABLED:
+        zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
+        tools += build_messaging_tools_for(settings, llm, zone)
+    if settings.JARVIS_PROACTIVE_ENABLED:
+        zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
+        tools += build_proactive_tools_for(settings, zone)
     descriptors = [tool.descriptor() for tool in tools]
     agent = (
         AgentBrain(

@@ -189,6 +189,20 @@ Graph facts are untrusted data in a delimited block (`docs/knowledge-graph.md`).
 never writes to the graph directly (validated typed facts through `GraphService` only), the agent
 holds no graph reference, and graph content cannot approve requests, run tools or alter policy.
 
+## Proactive intelligence and this boundary (Phase 14)
+
+The proactive engine has no PermissionManager path because it performs no action: it reads existing services and hands a sentence to the notification
+channels. A proactive signal is information, never authorization (a test replaces every mutating method of every source with a failing stub). The only tool is
+`proactive_explain` (LOW, read-only, one-time, bound to its parameters); names such as `proactive_disable` or `proactive_notify` are unknown and denied, and
+notification settings can only be changed in configuration. See `docs/proactive-intelligence.md`.
+
+## Messaging tools and this boundary (Phase 13)
+
+The six messaging tools (`message_list`, `message_search`, `message_get`, `conversation_list`, `conversation_get`,
+`message_summarize`) are registered only when `JARVIS_MESSAGING_ENABLED` is true. All are LOW risk, read-only, ONE_TIME scope, and bound
+to their exact resolved parameters. There is no send/edit/delete tool, and names such as `message_send` or `whatsapp_send` are unknown
+and therefore denied. Message text is untrusted; see `docs/messaging-integration.md`.
+
 ## Calendar tools and this boundary (Phase 12)
 
 The seven `calendar_*` tools are registered only when `JARVIS_CALENDAR_ENABLED` is true. Reads (`calendar_list`, `calendar_events`,
