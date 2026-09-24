@@ -3,9 +3,14 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 14 — Proactive Intelligence
+## Current status: Phase 15 — Daily Briefing & Productivity Intelligence
 
-Phases 0-13 are complete. Phase 14 lets JARVIS tell you, on its own, when something in your existing sources deserves
+Phases 0-14 are complete. Phase 15 combines your existing tasks, reminders, deadlines,
+Google Calendar, important email and (if set up) messages into a grounded, voice-friendly view: "Good morning", "What do I have today?", "What should I focus on?",
+"What's my next meeting?", "What did I miss yesterday?", "What should I prepare for tomorrow?". Priorities come from transparent rules (explicit priority, deadlines,
+overdue status, timing), never from the model or a score; suggestions are hedged and fact-based; conflicts are only reported; a failing source is reported honestly and
+never breaks the rest; and "where did you get that?" answers with the source. Read-only, no new table, no scheduler, no notifications (Phase 14 stays separate). Enabled by
+default (`JARVIS_BRIEFING_*`); see `docs/daily-briefing-productivity.md`. Phase 14 lets JARVIS tell you, on its own, when something in your existing sources deserves
 attention: a task is due soon or overdue, a deadline, interview or calendar meeting is approaching, two calendar events overlap, or an
 email seems to need action (observe -> analyze -> decide -> notify; it never acts, sends or modifies anything). A deterministic
 policy applies quiet hours, cooldown, de-duplication, priority and urgency; delivery reuses the existing tray and voice channels and
@@ -93,7 +98,7 @@ voice pipeline, `docs/windows-runtime.md` for the Windows runtime,
 `docs/security-and-permissions.md` for the permission layer,
 `docs/personal-memory.md` for personal memory,
 `docs/personal-rag.md` for personal RAG,
-`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, `docs/gmail-intelligence.md` for Gmail, `docs/event-and-deadline-intelligence.md` for events and deadlines, `docs/google-calendar-integration.md` for Google Calendar, `docs/messaging-integration.md` for messaging, `docs/proactive-intelligence.md` for proactive notifications, and `docs/requirements.md` for what each
+`docs/knowledge-graph.md` for the knowledge graph, `docs/tasks-and-reminders.md` for tasks and reminders, `docs/gmail-intelligence.md` for Gmail, `docs/event-and-deadline-intelligence.md` for events and deadlines, `docs/google-calendar-integration.md` for Google Calendar, `docs/messaging-integration.md` for messaging, `docs/proactive-intelligence.md` for proactive notifications, `docs/daily-briefing-productivity.md` for briefings, and `docs/requirements.md` for what each
 phase does and does not cover.
 
 ## Technology stack
@@ -213,7 +218,7 @@ Details in [`docs/security.md`](docs/security.md) and
 ## Roadmap
 
 Phase 0 established the foundation, Phase 1 added the voice engine and
-Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders and Phase 10 read-only Gmail and Phase 11 event & deadline intelligence and Phase 12 Google Calendar and Phase 13 read-only messaging and Phase 14 proactive notifications. Later phases — more tools, the approval UI,
+Phase 2 the Windows runtime and Phase 3 multi-turn conversation and Phase 4 the agent brain and Phase 5 the permission layer and Phase 6 personal memory and Phase 7 personal RAG and Phase 8 the knowledge graph and Phase 9 tasks and reminders and Phase 10 read-only Gmail and Phase 11 event & deadline intelligence and Phase 12 Google Calendar and Phase 13 read-only messaging and Phase 14 proactive notifications and Phase 15 daily briefing & productivity intelligence. Later phases — more tools, the approval UI,
 integrations (messaging and others), packaging, and the
 frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any

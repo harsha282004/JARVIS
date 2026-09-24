@@ -15,6 +15,7 @@ from integrations.calendar.intents import CalendarAction
 from integrations.gmail.intents import GmailAction
 from integrations.messaging.intents import MessageAction
 from agent.proactive.intents import ProactiveAction
+from agent.briefing.intents import BriefingAction
 from agent.tools.base import ToolDescriptor
 from backend.core.llm.messages import Message
 from backend.core.security import PermissionRequest
@@ -92,6 +93,8 @@ class AgentDecision(BaseModel):
     message_action: MessageAction | None = None
     # A validated proactive action (Phase 14; read-only: explain a notification). Data only, like the others.
     proactive_action: ProactiveAction | None = None
+    # A validated briefing action (Phase 15; read-only: a briefing or its explanation). Data only, like the others.
+    briefing_action: BriefingAction | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "AgentDecision":
@@ -102,8 +105,8 @@ class AgentDecision(BaseModel):
             raise ValueError("only action_request decisions may carry a plan, tools or permission needs")
         if self.search_query is not None and self.intent is not Intent.DOCUMENT_QUESTION:
             raise ValueError("only document_question decisions may carry a search query")
-        if any(a is not None for a in (self.task_action, self.gmail_action, self.event_action, self.calendar_action, self.message_action, self.proactive_action)) and not is_action:
-            raise ValueError("only action_request decisions may carry a task, Gmail, event, calendar, messaging or proactive action")
+        if any(a is not None for a in (self.task_action, self.gmail_action, self.event_action, self.calendar_action, self.message_action, self.proactive_action, self.briefing_action)) and not is_action:
+            raise ValueError("only action_request decisions may carry a task, Gmail, event, calendar, messaging, proactive or briefing action")
         return self
 
     @property

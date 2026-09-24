@@ -15,7 +15,7 @@ def settings(tmp_path=None, **overrides) -> Settings:
     base = {
         "DATABASE_URL": "postgresql+psycopg2://jarvis:jarvis@localhost:5432/jarvis_test",
         "JARVIS_MEMORY_ENABLED": False, "JARVIS_RAG_ENABLED": False, "JARVIS_KG_ENABLED": False,
-        "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_EVENTS_ENABLED": False,
+        "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_EVENTS_ENABLED": False, "JARVIS_BRIEFING_ENABLED": False,
         "JARVIS_TIMEZONE": "Asia/Kolkata",
     }
     if tmp_path is not None:
@@ -110,7 +110,7 @@ def test_event_settings_defaults_bounds_and_bootstrap(tmp_path):
     from voice.bootstrap import _build_conversation, build_event_tools_for
 
     base = {"DATABASE_URL": "postgresql+psycopg2://u:p@localhost/x", "JARVIS_MEMORY_ENABLED": False, "JARVIS_RAG_ENABLED": False,
-            "JARVIS_KG_ENABLED": False, "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_TIMEZONE": "Asia/Kolkata"}
+            "JARVIS_KG_ENABLED": False, "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_TIMEZONE": "Asia/Kolkata", "JARVIS_BRIEFING_ENABLED": False}
     s = Settings(_env_file=None, **base)
     assert (s.JARVIS_EVENTS_ENABLED, s.JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS, s.JARVIS_EVENT_MAX_RESULTS) == (True, 7, 20)
     for bad in ({"JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS": 0}, {"JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS": 366}, {"JARVIS_EVENT_MAX_RESULTS": 0}, {"JARVIS_EVENT_MAX_RESULTS": 101}):

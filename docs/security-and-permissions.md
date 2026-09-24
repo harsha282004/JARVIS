@@ -189,6 +189,13 @@ Graph facts are untrusted data in a delimited block (`docs/knowledge-graph.md`).
 never writes to the graph directly (validated typed facts through `GraphService` only), the agent
 holds no graph reference, and graph content cannot approve requests, run tools or alter policy.
 
+## Briefing tools and this boundary (Phase 15)
+
+`briefing_generate` and `briefing_explain` are LOW risk, read-only, one-time, no approval, bound to their exact parameters, and registered only when
+`JARVIS_BRIEFING_ENABLED` is true. They read existing services through `BriefingService` and change nothing (a test replaces every mutating method with a failing stub). The
+model cannot supply item ids, priorities, scores or anything to create/send/complete/modify/delete; unknown names such as `briefing_send` are denied. Source text is untrusted and
+replies are kept out of the conversation history. See `docs/daily-briefing-productivity.md`.
+
 ## Proactive intelligence and this boundary (Phase 14)
 
 The proactive engine has no PermissionManager path because it performs no action: it reads existing services and hands a sentence to the notification

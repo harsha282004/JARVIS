@@ -9,6 +9,8 @@ outward effect is one short factual sentence handed to the notification channels
 the voice announcement queue). It never changes a task, event, calendar entry or email, never sends anything, never calls
 a tool and never uses a language model.
 
+(Phase 15's daily briefing is a separate, on-request feature: it produces briefing content and does not notify; see `docs/daily-briefing-productivity.md`.)
+
 It is **off by default** (`JARVIS_PROACTIVE_ENABLED=false`). Reminders and tasks work exactly as before whether it is on or off.
 
 ## Architecture

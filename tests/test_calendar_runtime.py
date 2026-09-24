@@ -20,7 +20,7 @@ def settings(tmp_path=None, **overrides) -> Settings:
     base = {
         "DATABASE_URL": "postgresql+psycopg2://jarvis:jarvis@localhost:5432/jarvis_test",
         "JARVIS_MEMORY_ENABLED": False, "JARVIS_RAG_ENABLED": False, "JARVIS_KG_ENABLED": False,
-        "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_EVENTS_ENABLED": False,
+        "JARVIS_TASKS_ENABLED": False, "JARVIS_REMINDERS_ENABLED": False, "JARVIS_EVENTS_ENABLED": False, "JARVIS_BRIEFING_ENABLED": False,
         "JARVIS_GMAIL_ENABLED": False, "JARVIS_TIMEZONE": "Asia/Kolkata",
     }
     if tmp_path is not None:

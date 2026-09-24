@@ -33,7 +33,7 @@ from voice.engine import VoiceEngine
 def settings(**overrides) -> Settings:
     base = {
         "DATABASE_URL": "postgresql+psycopg2://jarvis:jarvis@localhost:5432/jarvis_test",
-        "JARVIS_MEMORY_ENABLED": False, "JARVIS_RAG_ENABLED": False, "JARVIS_KG_ENABLED": False, "JARVIS_EVENTS_ENABLED": False,
+        "JARVIS_MEMORY_ENABLED": False, "JARVIS_RAG_ENABLED": False, "JARVIS_KG_ENABLED": False, "JARVIS_EVENTS_ENABLED": False, "JARVIS_BRIEFING_ENABLED": False,
         "JARVIS_TIMEZONE": "Asia/Kolkata",
     }
     base.update(overrides)

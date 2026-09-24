@@ -60,6 +60,12 @@ See `docs/event-and-deadline-intelligence.md`. Apply the schema with `alembic -c
 scripted LLM and doubles for Gmail/documents/memory; set `JARVIS_TEST_DATABASE_URL` to a **disposable** PostgreSQL database to
 also run them there and the real-PostgreSQL test in `tests/integration`. No new dependencies.
 
+## Daily briefing (Phase 15)
+
+See `docs/daily-briefing-productivity.md`. Nothing to migrate or schedule. Try `python -m desktop.launcher` (or the voice pipeline) and say "Good morning" or "What
+should I focus on?". Tests (`tests/test_briefing_*.py`) need no account; `tests/integration/test_briefing_real.py` uses a real SQLite file and runs Google / Telegram /
+PostgreSQL checks only when those are configured (`JARVIS_TEST_DATABASE_URL`, tokens); all are read-only.
+
 ## Proactive intelligence (Phase 14)
 
 See `docs/proactive-intelligence.md`. Run `alembic -c database/alembic.ini upgrade head` once (creates `proactive_notifications`), set

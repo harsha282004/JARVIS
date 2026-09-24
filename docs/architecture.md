@@ -56,6 +56,14 @@ read-only tools. The AgentBrain may propose a validated `GmailAction` (words onl
 reaches the brain and never enters the conversation history. No database table, no mailbox mirror. See
 `docs/gmail-intelligence.md`.
 
+## Phase 15 scope (Daily briefing & productivity intelligence)
+
+Phase 15 adds `agent/briefing/`: a `ProductivityCollector` that reads the existing task, reminder, event, calendar, Gmail and messaging services
+(each isolated, bounded and read-only) into a `ProductivityContext` of normalized items with source references; a deterministic `PriorityAnalyzer`;
+a `Builder` for conflicts, preparation, risks, focus and voice wording; and a `BriefingService` with an optional, grounding-checked LLM rephrasing step.
+The AgentBrain only proposes `briefing_generate` / `briefing_explain` (LOW risk, read-only). No table, migration, scheduler or notifier is added; Phase 14 remains the only
+notification system. See `docs/daily-briefing-productivity.md`.
+
 ## Phase 14 scope (Proactive intelligence)
 
 Phase 14 adds `agent/proactive/`: read-only signal sources over the existing task, event, calendar and Gmail services, a deterministic
@@ -284,6 +292,11 @@ per the JARVIS master specification.
 Google Calendar or any calendar integration or sync, proactive notifications, reminders created for events, a daily
 briefing, automatic or scheduled extraction, automatic rescheduling, recurring or multi-day events, event UI, and everything
 in the Phase 10 list below.
+
+## What Phase 15 intentionally does not implement
+
+A scheduled or spoken-on-its-own briefing, any notification, productivity scores or judgments, any change to tasks, events, calendar, email or messages, briefing history,
+a settings UI or dashboard, a desktop/coding agent, research or document intelligence, vision, multi-agent, remote/mobile access, media control, and everything in the Phase 14 list below.
 
 ## What Phase 14 intentionally does not implement
 

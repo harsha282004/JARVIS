@@ -32,6 +32,10 @@ from agent.tasks.notifications import (
 )
 from agent.tasks.repository import TaskRepository
 from agent.tasks.scheduler import ReminderScheduler
+from agent.briefing.builder import Builder as BriefingBuilder
+from agent.briefing.collector import ProductivityCollector
+from agent.briefing.service import BriefingService
+from agent.briefing.tools import BriefingToolContext, build_briefing_tools
 from agent.proactive.engine import ProactiveEngine
 from agent.proactive.models import Channel
 from agent.proactive.policy import NotificationPolicy, PolicyConfig, parse_clock
@@ -326,10 +330,37 @@ def build_messaging_registry(settings: Settings) -> ProviderRegistry:
 def build_messaging_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[MessagingTool]:
     """The read-only messaging tools, or none when messaging is disabled. Building them never contacts a provider and
     never fails for a missing token: a request then gets a clear setup message (docs/messaging-integration.md)."""
-    if not settings.JARVIS_MESSAGING_ENABLED:
+    service = build_messaging_service(settings, llm)
+    if service is None:
         return []
-    service = MessagingService(build_messaging_registry(settings), llm, max_results=settings.JARVIS_MESSAGING_MAX_RESULTS)
     return build_messaging_tools(MessagingToolContext(service, TimeParser(zone), utcnow))
+
+
+def build_messaging_service(settings: Settings, llm: LLMProvider) -> MessagingService | None:
+    """The messaging service, or None when messaging is disabled. Never contacts a provider when built."""
+    if not settings.JARVIS_MESSAGING_ENABLED:
+        return None
+    return MessagingService(build_messaging_registry(settings), llm, max_results=settings.JARVIS_MESSAGING_MAX_RESULTS)
+
+
+def build_briefing_service(
+    settings: Settings, llm: LLMProvider, zone, *, tasks=None, reminders=None, events=None, gmail=None, calendar=None, messaging=None, clock=utcnow
+) -> BriefingService | None:
+    """The briefing service over the EXISTING services (it creates no task/reminder/calendar/email system of its own), or None
+    when briefings are disabled. Every service is optional: whatever is not set up is simply left out of a briefing."""
+    if not settings.JARVIS_BRIEFING_ENABLED:
+        return None
+    collector = ProductivityCollector(
+        zone=zone, clock=clock, tasks=tasks, reminders=reminders, events=events, calendar=calendar, gmail=gmail, messaging=messaging,
+        max_items=settings.JARVIS_BRIEFING_MAX_ITEMS, lookahead_days=settings.JARVIS_BRIEFING_LOOKAHEAD_DAYS, email_limit=settings.JARVIS_BRIEFING_EMAIL_LIMIT,
+    )
+    return BriefingService(collector, BriefingBuilder(zone, settings.JARVIS_BRIEFING_MAX_ITEMS), llm=llm, use_llm=settings.JARVIS_BRIEFING_USE_LLM, clock=clock)
+
+
+def build_briefing_tools_for(settings: Settings, llm: LLMProvider, zone, **services) -> list:
+    """The read-only briefing tools, or none when briefings are disabled."""
+    service = build_briefing_service(settings, llm, zone, **services)
+    return build_briefing_tools(BriefingToolContext(service)) if service is not None else []
 
 
 def build_event_service(settings: Settings, zone, tasks=None) -> EventService | None:
@@ -401,6 +432,7 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
 
     tools = list(task_system.tools) if task_system is not None else []
     gmail = build_gmail_service(settings, llm)
+    events_service = None
     if settings.JARVIS_GMAIL_ENABLED or settings.JARVIS_EVENTS_ENABLED or settings.JARVIS_CALENDAR_ENABLED:
         zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
         tasks_service = task_system.tasks if task_system is not None else None
@@ -417,6 +449,14 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
     if settings.JARVIS_PROACTIVE_ENABLED:
         zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
         tools += build_proactive_tools_for(settings, zone)
+    if settings.JARVIS_BRIEFING_ENABLED:
+        zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
+        tasks_for_briefing = task_system.tasks if task_system is not None else None
+        tools += build_briefing_tools_for(
+            settings, llm, zone, tasks=tasks_for_briefing, reminders=task_system.reminders if task_system is not None else None,
+            events=events_service or (build_event_service(settings, zone, tasks_for_briefing) if settings.JARVIS_EVENTS_ENABLED else None),
+            gmail=gmail, calendar=build_calendar_service(settings, zone), messaging=build_messaging_service(settings, llm),
+        )
     descriptors = [tool.descriptor() for tool in tools]
     agent = (
         AgentBrain(

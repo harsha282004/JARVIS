@@ -84,6 +84,26 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 15 — Daily Briefing & Productivity Intelligence
+
+### Functional requirements
+
+- A typed `ProductivityContext` (references and normalized summaries, never source copies) and `DailyBriefing` with only meaningful sections.
+- Aggregation of tasks, reminders, Phase 11 deadlines/events, Google Calendar, important/action-required email and, if configured, messages, through the existing services only.
+- Deterministic, transparent priority analysis (CRITICAL/HIGH/NORMAL/LOW) from explicit priority, deadline proximity, overdue status and calendar timing; no LLM priority, no shown score.
+- Windows today/tomorrow/this week/next 7 days (+ look-back), quick/normal/detailed detail, voice-bounded output, focus, next, missed, preparation, conflict and risk reporting.
+- Source traceability and explanation (`briefing_explain`); an optional LLM rephrasing that is accepted only if grounded in the facts.
+- `JARVIS_BRIEFING_ENABLED`, `_MAX_ITEMS`, `_LOOKAHEAD_DAYS`, `_EMAIL_LIMIT`, `_USE_LLM`.
+
+### Non-functional requirements
+
+- Read-only: no task/event/calendar/email/message is created, changed, sent or deleted; no permission bypass; source text is untrusted and kept out of history and logs.
+- One unavailable source never breaks a briefing; missing sources are never fabricated; no new table, scheduler, notifier or dependency.
+
+### Explicitly out of scope for Phase 15
+
+Scheduled briefings, notifications, productivity scores, autonomous actions, briefing history, settings UI, and everything out of scope earlier.
+
 ## Phase 14 — Proactive Intelligence
 
 ### Functional requirements

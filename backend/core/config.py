@@ -160,6 +160,19 @@ class Settings(BaseSettings):
     # Most messages read or spoken per request (JARVIS never downloads a whole history).
     JARVIS_MESSAGING_MAX_RESULTS: int = Field(default=20, ge=1, le=100)
 
+    # --- Daily briefing & productivity intelligence (Phase 15; read-only, see docs/daily-briefing-productivity.md) ---
+    # Summarizes and prioritizes what your existing tasks, reminders, deadlines, calendar, email and messages already say.
+    # It never creates, changes, sends or deletes anything. Sources that are not set up are simply left out.
+    JARVIS_BRIEFING_ENABLED: bool = True
+    # Most items named per section when you ask for a detailed briefing (spoken briefings use counts instead of long lists).
+    JARVIS_BRIEFING_MAX_ITEMS: int = Field(default=10, ge=1, le=50)
+    # How many days ahead "upcoming" tasks, deadlines and events reach beyond the period you asked about.
+    JARVIS_BRIEFING_LOOKAHEAD_DAYS: int = Field(default=7, ge=1, le=30)
+    # Most important/action-required emails a briefing considers (0 leaves email out of briefings).
+    JARVIS_BRIEFING_EMAIL_LIMIT: int = Field(default=5, ge=0, le=20)
+    # true = the local LLM may rephrase the briefing more naturally, accepted only if it adds nothing the facts do not contain.
+    JARVIS_BRIEFING_USE_LLM: bool = False
+
     # --- Proactive intelligence (Phase 14; see docs/proactive-intelligence.md; run the Alembic migration once) ---
     # OBSERVE -> ANALYZE -> DECIDE -> NOTIFY: JARVIS may tell you about a due task, an approaching event or deadline, a
     # calendar conflict or an email that needs attention, through the existing tray/voice channels. It only notifies;
