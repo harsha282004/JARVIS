@@ -61,8 +61,8 @@ description below is kept for history.
 
 - Consent prompts / a permission UI (Phase 21) and persistent audit storage.
   (Per-tool rules, scopes and an in-memory audit trail exist since Phase 5.)
-- Credential storage/retrieval for real integrations (Gmail, Calendar,
-  messaging, etc.) — only placeholder env var names exist in `.env.example`.
+- A credential vault. Gmail and Google Calendar keep OAuth tokens in local, git-ignored files (never logged or sent to the
+  model; see docs/google-calendar-integration.md); messaging and other integrations do not exist yet.
 - Sandboxing or process-level isolation for tool execution.
 
 These are expected to be built out once concrete tools and integrations

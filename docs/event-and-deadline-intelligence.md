@@ -5,8 +5,9 @@ assignment and application deadlines, appointments. It learns them from what you
 an email, an indexed document or something you told it earlier. It can answer "what's coming up", "when is my
 next interview", "what's overdue" and "how many days until my exam", and it tells you where each date came from.
 
-This is JARVIS's **internal** intelligence layer only. It does **not** connect to Google Calendar or any other
-calendar (Phase 12), does **not** notify or remind you on its own (Phase 14), and never reschedules anything.
+This is JARVIS's **internal** intelligence layer. It does not itself connect to any calendar: Google Calendar is a separate
+integration (`docs/google-calendar-integration.md`, Phase 12) that maps events JARVIS creates or changes into this layer
+(`source_type=GOOGLE_CALENDAR`). It does **not** notify or remind you on its own (Phase 14), and never reschedules anything.
 
 ## Architecture
 

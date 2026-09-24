@@ -105,7 +105,7 @@ class TaskActionExecutor:
         if request.status is PermissionStatus.PENDING and resolution.confirm_prompt:
             self._pending[session_id] = _Pending(tool, request, params, self._clock() + self._ttl)
             logger.info("Confirmation requested (tool=%s)", tool.name)
-            return ActionOutcome(resolution.confirm_prompt, request)
+            return ActionOutcome(resolution.confirm_prompt, request, history_text=getattr(tool, "prompt_history_placeholder", None))
         logger.warning("Task action not permitted (tool=%s, status=%s)", tool.name, request.status.value)
         return ActionOutcome(DENIED_REPLY, request)
 

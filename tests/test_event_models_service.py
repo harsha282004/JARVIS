@@ -43,7 +43,7 @@ def test_enums_match_the_specification():
     assert {t.name for t in EventType} == {"DEADLINE", "MEETING", "INTERVIEW", "EXAM", "ASSIGNMENT", "APPLICATION",
                                            "APPOINTMENT", "EVENT", "REMINDER", "OTHER"}
     assert {s.name for s in EventStatus} == {"UPCOMING", "ACTIVE", "COMPLETED", "CANCELLED", "MISSED", "UNKNOWN"}
-    assert {s.name for s in SourceType} == {"CONVERSATION", "MEMORY", "RAG_DOCUMENT", "GMAIL", "TASK", "USER_EXPLICIT", "UNKNOWN"}
+    assert {s.name for s in SourceType} == {"CONVERSATION", "MEMORY", "RAG_DOCUMENT", "GMAIL", "TASK", "GOOGLE_CALENDAR", "USER_EXPLICIT", "UNKNOWN"}
     assert DUE_TYPES == {EventType.DEADLINE, EventType.ASSIGNMENT, EventType.APPLICATION}
     assert EVENT_TRANSITIONS[EventStatus.COMPLETED] == frozenset() == EVENT_TRANSITIONS[EventStatus.CANCELLED]
 

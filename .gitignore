@@ -5,6 +5,7 @@ client_secret*.json
 credentials.json
 token.json
 gmail_token*.json
+calendar_token*.json
 .env
 .env.*
 !.env.example

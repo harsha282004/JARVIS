@@ -189,6 +189,15 @@ Graph facts are untrusted data in a delimited block (`docs/knowledge-graph.md`).
 never writes to the graph directly (validated typed facts through `GraphService` only), the agent
 holds no graph reference, and graph content cannot approve requests, run tools or alter policy.
 
+## Calendar tools and this boundary (Phase 12)
+
+The seven `calendar_*` tools are registered only when `JARVIS_CALENDAR_ENABLED` is true. Reads (`calendar_list`, `calendar_events`,
+`calendar_search`, `calendar_get_event`) are LOW risk with no approval; `calendar_create_event`, `calendar_update_event` and
+`calendar_cancel_event` are MEDIUM and pending until the user says yes (read by code). The permission request is bound to the
+exact resolved parameters (calendar id, event id, etag and new values), so it cannot be reused for another event or changed
+values. Unregistered calendar-like tools (`calendar_delete`, `calendar_share`, ...) are denied. Calendar text is untrusted;
+see `docs/google-calendar-integration.md`.
+
 ## Event tools and this boundary (Phase 11)
 
 Eight local event/deadline tools are registered with the manager (ONE_TIME scope, parameters bound): reads,

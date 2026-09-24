@@ -60,6 +60,14 @@ See `docs/event-and-deadline-intelligence.md`. Apply the schema with `alembic -c
 scripted LLM and doubles for Gmail/documents/memory; set `JARVIS_TEST_DATABASE_URL` to a **disposable** PostgreSQL database to
 also run them there and the real-PostgreSQL test in `tests/integration`. No new dependencies.
 
+## Google Calendar (Phase 12)
+
+See `docs/google-calendar-integration.md`. Enable the Google Calendar API on the same Cloud project, reuse the Desktop client
+(or set `CALENDAR_CLIENT_ID` / `CALENDAR_CLIENT_SECRET`), set `JARVIS_CALENDAR_ENABLED=true`, then run
+`python scripts/calendar_cli.py auth`. Tests (`tests/test_calendar_*.py`) need no account; real-Google tests
+(`tests/integration/test_calendar_real.py`) skip without a token, and change events only on a dedicated calendar named in
+`JARVIS_TEST_CALENDAR_ID`.
+
 ## Gmail (Phase 10)
 
 See `docs/gmail-intelligence.md` for the Google Cloud setup. In short: enable the Gmail API, create a *Desktop

@@ -286,6 +286,16 @@ class EventService:
         logger.info("Event updated (event=%s)", event_id)
         return self.get_event(event_id)
 
+    def find_by_source(self, source_type: SourceType, source_id: str) -> Event | None:
+        """The event stored for an external item (e.g. a Google Calendar event's `calendar_id/event_id`), if any."""
+        for event in self._repo.list_by_source(source_type, None, SCAN_LIMIT):
+            if event.source.source_id == source_id:
+                return event
+        return None
+
+    def list_by_source(self, source_type: SourceType, *, open_only: bool = True, limit: int = 100) -> list[Event]:
+        return self._repo.list_by_source(source_type, OPEN_STATUSES if open_only else None, limit)
+
     def merge_metadata(self, event_id: str, patch: dict[str, Any]) -> Event:
         event = self.get_event(event_id)
         self._repo.update_event(event_id, {"extra": {**event.metadata, **patch}, "updated_at": self._clock()})

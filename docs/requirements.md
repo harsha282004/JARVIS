@@ -84,6 +84,29 @@ proactive notifications, remote access, Windows startup/tray, the React
 dashboard, multi-agent orchestration, research mode, vision, and
 production deployment.
 
+## Phase 12 — Google Calendar Integration
+
+### Functional requirements
+
+- Shared Google OAuth (desktop flow, least-privilege scopes `calendar.events` and `calendar.calendarlist.readonly`), separate
+  token, refresh, revoked/unavailable handling; nothing hardcoded; credentials and tokens git-ignored.
+- A `CalendarClient` abstraction and JARVIS-owned models; list calendars, read/search events, details, create (with duration,
+  all-day, location, recurrence, explicit-email attendees, time zones), update, cancel.
+- Strict AgentBrain calendar actions; the model can never supply ids, URLs, tokens, RRULEs or invitation settings.
+- Reads LOW/no approval; create/update/cancel MEDIUM with the user's spoken yes bound to the exact event; unknown tools denied.
+- Phase 11 conflict detection reused (reported, never fixed); bounded Phase 11 mapping, no second event model, no migration.
+- `JARVIS_CALENDAR_ENABLED`, `JARVIS_CALENDAR_CREDENTIALS_PATH`, `JARVIS_CALENDAR_TOKEN_PATH`, `JARVIS_CALENDAR_MAX_RESULTS`.
+
+### Non-functional requirements
+
+- Calendar text is untrusted data: sanitized, never shown to the brain, kept out of history; no event text, attendees or
+  tokens in logs; no invitation emails; no new dependencies.
+
+### Explicitly out of scope for Phase 12
+
+Messaging, proactive intelligence, daily briefing, autonomous scheduling/rescheduling, email replies, dashboard, and
+everything out of scope earlier.
+
 ## Phase 11 — Event & Deadline Intelligence
 
 ### Functional requirements

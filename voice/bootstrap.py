@@ -37,6 +37,11 @@ from agent.tasks.system import TaskSystem
 from agent.tasks.timeparse import TimeParser
 from agent.tasks.tools import TaskToolContext, build_task_tools
 from agent.tasks.zone import resolve_timezone
+from integrations.calendar.auth import CalendarAuthenticator
+from integrations.calendar.client import HttpCalendarClient
+from integrations.calendar.service import CalendarService
+from integrations.calendar.sync import CalendarEventSync
+from integrations.calendar.tools import CalendarTool, CalendarToolContext, build_calendar_tools
 from integrations.gmail.auth import GmailAuthenticator
 from integrations.gmail.client import HttpGmailClient
 from integrations.gmail.service import GmailService
@@ -228,17 +233,49 @@ def build_gmail_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[Gm
     return build_gmail_tools(GmailToolContext(service, zone, utcnow)) if service is not None else []
 
 
-def build_event_tools_for(
-    settings: Settings, zone, *, tasks=None, gmail=None, rag=None, memory=None, graph=None
-) -> list[EventTool]:
-    """The event/deadline tools, or none when events are disabled. Events live in the local database; sources
-    (Gmail, documents, memory) are only read when the user asks. Nothing here talks to any calendar."""
+def build_event_service(settings: Settings, zone, tasks=None) -> EventService | None:
     if not settings.JARVIS_EVENTS_ENABLED:
-        return []
-    events = EventService(
+        return None
+    return EventService(
         EventRepository(SessionLocal), zone=zone, tasks=tasks, max_results=settings.JARVIS_EVENT_MAX_RESULTS,
         lookahead_days=settings.JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS,
     )
+
+
+def build_calendar_authenticator(settings: Settings) -> CalendarAuthenticator:
+    """Calendar OAuth. The client comes from the credentials JSON, else CALENDAR_CLIENT_ID/SECRET, else the Gmail client
+    values (one Google Desktop-app client can serve both APIs). The Calendar token is its own file."""
+    client_id = settings.CALENDAR_CLIENT_ID or settings.GMAIL_CLIENT_ID
+    client_secret = settings.CALENDAR_CLIENT_SECRET.get_secret_value() or settings.GMAIL_CLIENT_SECRET.get_secret_value()
+    return CalendarAuthenticator(
+        _project_path(settings.JARVIS_CALENDAR_CREDENTIALS_PATH), _project_path(settings.JARVIS_CALENDAR_TOKEN_PATH),
+        client_id, client_secret,
+    )
+
+
+def build_calendar_tools_for(settings: Settings, zone, *, events: EventService | None = None) -> list[CalendarTool]:
+    """The Google Calendar tools, or none when Calendar is disabled. Building them never contacts Google and never fails
+    for missing credentials: a request then gets a clear setup message (docs/google-calendar-integration.md)."""
+    if not settings.JARVIS_CALENDAR_ENABLED:
+        return []
+    auth = build_calendar_authenticator(settings)
+    service = CalendarService(
+        HttpCalendarClient(auth, zone=zone), zone=zone, max_results=settings.JARVIS_CALENDAR_MAX_RESULTS, is_ready=auth.is_ready
+    )
+    context = CalendarToolContext(
+        service, TimeParser(zone), utcnow, sync=CalendarEventSync(service, events), lookahead_days=settings.JARVIS_EVENT_DEFAULT_LOOKAHEAD_DAYS
+    )
+    return build_calendar_tools(context)
+
+
+def build_event_tools_for(
+    settings: Settings, zone, *, tasks=None, gmail=None, rag=None, memory=None, graph=None, events: EventService | None = None
+) -> list[EventTool]:
+    """The event/deadline tools, or none when events are disabled. Events live in the local database; sources
+    (Gmail, documents, memory) are only read when the user asks. These tools never talk to any calendar."""
+    if not settings.JARVIS_EVENTS_ENABLED:
+        return []
+    events = events or build_event_service(settings, zone, tasks)
     context = EventToolContext(
         events, TimeParser(zone), utcnow, tasks=tasks, gmail=gmail, rag=rag, memory=memory,
         linker=EventGraphLinker(graph) if graph is not None else None,
@@ -260,14 +297,16 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
 
     tools = list(task_system.tools) if task_system is not None else []
     gmail = build_gmail_service(settings, llm)
-    if settings.JARVIS_GMAIL_ENABLED or settings.JARVIS_EVENTS_ENABLED:
+    if settings.JARVIS_GMAIL_ENABLED or settings.JARVIS_EVENTS_ENABLED or settings.JARVIS_CALENDAR_ENABLED:
         zone = task_system.parser.zone if task_system is not None else resolve_timezone(settings.JARVIS_TIMEZONE)
+        tasks_service = task_system.tasks if task_system is not None else None
+        events_service = build_event_service(settings, zone, tasks_service)
         if gmail is not None:
             tools += build_gmail_tools(GmailToolContext(gmail, zone, utcnow))
         tools += build_event_tools_for(
-            settings, zone, tasks=task_system.tasks if task_system is not None else None, gmail=gmail, rag=rag,
-            memory=memory, graph=graph,
+            settings, zone, tasks=tasks_service, gmail=gmail, rag=rag, memory=memory, graph=graph, events=events_service,
         )
+        tools += build_calendar_tools_for(settings, zone, events=events_service)
     descriptors = [tool.descriptor() for tool in tools]
     agent = (
         AgentBrain(

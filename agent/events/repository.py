@@ -122,6 +122,13 @@ class EventRepository:
         )
         return self._run(lambda s: (lambda r: _event(r) if r is not None else None)(s.scalars(stmt).first()))
 
+    def list_by_source(self, source_type: SourceType, statuses: Collection[EventStatus] | None = None, limit: int = 100) -> list[Event]:
+        stmt = select(EventRow).where(EventRow.source_type == source_type.value)
+        if statuses is not None:
+            stmt = stmt.where(EventRow.status.in_([s.value for s in statuses]))
+        stmt = stmt.order_by(func.coalesce(EventRow.start_at, EventRow.due_at).asc(), EventRow.id.asc()).limit(limit)
+        return self._run(lambda s: [_event(r) for r in s.scalars(stmt)])
+
     def update_event(self, event_id: str, values: Mapping[str, Any], expected_status: EventStatus | None = None) -> bool:
         """Apply `values` (EventRow attribute names) if the event still has `expected_status`. True if it matched."""
         conditions = [EventRow.id == event_id]

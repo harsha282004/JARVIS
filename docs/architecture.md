@@ -56,6 +56,15 @@ read-only tools. The AgentBrain may propose a validated `GmailAction` (words onl
 reaches the brain and never enters the conversation history. No database table, no mailbox mirror. See
 `docs/gmail-intelligence.md`.
 
+## Phase 12 scope (Google Calendar)
+
+Phase 12 adds `integrations/calendar/` (a `CalendarClient` interface with an httpx implementation, a `CalendarService`,
+seven tools) on the shared `integrations/google_oauth.py` that Gmail now also uses. The AgentBrain may propose a validated
+`CalendarAction` (words only, never ids, URLs or RRULEs); reads are LOW risk, create/update/cancel are MEDIUM and need the
+user's spoken yes, bound to the exact event. Overlaps use the Phase 11 rules and are reported, never fixed. Events JARVIS
+creates or changes are mapped to one Phase 11 `Event` each (bounded read-through, no wholesale mirror, no migration).
+No invitations are sent. See `docs/google-calendar-integration.md`.
+
 ## Phase 9 scope (tasks and reminders)
 
 Phase 9 adds `agent/tasks/`: typed `Task`/`Reminder`/`Recurrence` models with explicit status enums and a
@@ -257,6 +266,11 @@ per the JARVIS master specification.
 Google Calendar or any calendar integration or sync, proactive notifications, reminders created for events, a daily
 briefing, automatic or scheduled extraction, automatic rescheduling, recurring or multi-day events, event UI, and everything
 in the Phase 10 list below.
+
+## What Phase 12 intentionally does not implement
+
+Messaging platforms, proactive alerts, a daily briefing, autonomous scheduling or rescheduling, invitations or email replies,
+Meet link creation, calendar sharing/creation, push sync, a dashboard, and everything in the Phase 11 list below.
 
 ## What Phase 10 intentionally does not implement
 

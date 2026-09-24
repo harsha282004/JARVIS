@@ -726,8 +726,10 @@ def test_the_brain_cannot_reach_event_services():
         assert not re.search(r"^\s*(from|import)\s+agent\.events\.(service|repository|tools|sources|graph|extraction)", text, re.M)
 
 
-def test_no_calendar_integration_exists():
-    assert not (ROOT / "integrations" / "calendar" / "client.py").exists()
-    assert [p.name for p in (ROOT / "integrations" / "calendar").glob("*.py")] == ["__init__.py"]
-    text = "".join(p.read_text(encoding="utf-8") for p in (ROOT / "integrations").rglob("*.py") if "gmail" not in p.parts)
-    assert "calendar.googleapis.com" not in text and "calendar.events" not in text
+def test_the_events_layer_has_no_calendar_integration_code():
+    """Phase 12 added Google Calendar as its own integration (integrations/calendar). The Phase 11 events layer still
+    knows nothing about it: it imports no calendar module, and the mapping lives on the calendar side."""
+    for path in EVENTS_DIR.glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"^\s*(from|import)\s+integrations\.calendar", text, re.M), path.name
+        assert "calendar.googleapis.com" not in text and "googleapis" not in text, path.name

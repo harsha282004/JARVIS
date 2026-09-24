@@ -139,6 +139,17 @@ class Settings(BaseSettings):
     # Most emails fetched by one search (JARVIS never downloads a whole mailbox).
     JARVIS_GMAIL_MAX_RESULTS: int = Field(default=10, ge=1, le=50)
 
+    # --- Google Calendar (off until you set it up, see docs/google-calendar-integration.md) ---
+    JARVIS_CALENDAR_ENABLED: bool = False
+    # OAuth client for Calendar, as an alternative to the JSON file below. If empty, GMAIL_CLIENT_ID/SECRET are used
+    # (one Google "Desktop app" client can serve both APIs). `.env` is git-ignored; the secret is never printed or logged.
+    CALENDAR_CLIENT_ID: str = ""
+    CALENDAR_CLIENT_SECRET: SecretStr = SecretStr("")
+    JARVIS_CALENDAR_CREDENTIALS_PATH: str = ".jarvis/calendar/credentials.json"
+    JARVIS_CALENDAR_TOKEN_PATH: str = ".jarvis/calendar/token.json"
+    # Most events read per calendar in one request (JARVIS never downloads a whole calendar).
+    JARVIS_CALENDAR_MAX_RESULTS: int = Field(default=20, ge=1, le=100)
+
     # --- Event & deadline intelligence (local PostgreSQL; run the Alembic migration once) ---
     JARVIS_EVENTS_ENABLED: bool = True
     # How far ahead "what's coming up" looks.

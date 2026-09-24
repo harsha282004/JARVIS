@@ -163,8 +163,4 @@ class EmailClassification(BaseModel):
     reasons: list[str] = Field(default_factory=list)  # short, content-free rule names
 
 
-class AuthStatus(BaseModel):
-    configured: bool  # a client secrets file exists
-    authorized: bool  # a usable token exists
-    detail: str = ""
-    extra: dict[str, Any] = Field(default_factory=dict)
+from integrations.google_oauth import AuthStatus  # noqa: E402,F401  (shared with Calendar; re-exported)

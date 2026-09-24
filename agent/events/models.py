@@ -104,6 +104,7 @@ class SourceType(StrEnum):
     RAG_DOCUMENT = "rag_document"
     GMAIL = "gmail"
     TASK = "task"
+    GOOGLE_CALENDAR = "google_calendar"  # Phase 12: a reference to an event that lives on Google Calendar
     USER_EXPLICIT = "user_explicit"
     UNKNOWN = "unknown"
 
