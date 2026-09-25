@@ -46,8 +46,15 @@ class PiperProvider(TTSProvider):
     def is_ready(self) -> bool:
         return self._voice is not None
 
+    speed: float = 1.0  # 1.0 normal; 1.25 = 25 % faster. Piper's length_scale is the inverse.
+
+    def set_speed(self, speed: float) -> None:
+        self.speed = min(max(float(speed), 0.5), 2.0)
+
     def synthesize(self, text: str) -> tuple[np.ndarray, int]:
-        chunks = list(self._voice.synthesize(text))
+        from piper import SynthesisConfig
+
+        chunks = list(self._voice.synthesize(text, SynthesisConfig(length_scale=1.0 / self.speed)))
         if not chunks:
             raise ProviderNotConfiguredError("Piper produced no audio for the given text")
         audio = np.concatenate([chunk.audio_float_array for chunk in chunks])

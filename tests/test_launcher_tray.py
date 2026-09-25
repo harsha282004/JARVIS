@@ -146,11 +146,11 @@ def test_tray_menu_enablement_follows_state():
     def item(name):  # texts can be dynamic (pystray evaluates them on access)
         return next(i for i in menu.items if i and i.text == name)
 
-    assert item("Pause JARVIS").enabled is True and item("Restart JARVIS").enabled is True
+    assert item("Pause listening").enabled is True and item("Restart JARVIS").enabled is True
     manager.state = RuntimeState.PAUSED
-    assert item("Resume JARVIS").enabled is True
+    assert item("Resume listening").enabled is True
     manager.state = RuntimeState.STARTING
-    assert item("Pause JARVIS").enabled is False and item("Restart JARVIS").enabled is False
+    assert item("Pause listening").enabled is False and item("Restart JARVIS").enabled is False
     assert item("Talk to JARVIS").enabled is False  # nothing wired and not running: greyed out, never faked
     assert item("Tasks").enabled is False and item("Today's Briefing").enabled is False
 

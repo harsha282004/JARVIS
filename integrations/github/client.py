@@ -76,6 +76,20 @@ class GitHubClient:
             raise GitHubResponseError("malformed repository")
         return parsed
 
+    def readme(self, full_name: str, max_chars: int = 60_000) -> str:
+        """The repository's README as text (GitHub decodes nothing for us: the API returns base64). Read-only; bounded; untrusted content."""
+        import base64
+
+        data = self._get(f"repos/{quote(validate_repo(full_name), safe='/')}/readme")
+        if not isinstance(data, dict) or not isinstance(data.get("content"), str):
+            raise GitHubResponseError("malformed README response")
+        if data.get("encoding") != "base64":
+            raise GitHubResponseError("unexpected README encoding")
+        try:
+            return base64.b64decode(data["content"]).decode("utf-8", "replace")[:max_chars]
+        except ValueError as exc:
+            raise GitHubResponseError("malformed README content") from exc
+
     def commits(self, full_name: str, since: datetime | None = None, limit: int = PER_PAGE) -> list[Commit]:
         params: dict[str, Any] = {"per_page": min(limit, 100)}
         if since:

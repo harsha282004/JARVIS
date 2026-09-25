@@ -15,9 +15,10 @@ Permission policy (also in docs/tasks-and-reminders.md):
       recurring reminder ends every future occurrence), so the user confirms by voice before anything changes.
 """
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
 from pydantic import BaseModel
@@ -39,7 +40,10 @@ from agent.tasks.recurrence import next_occurrence
 from agent.tasks.service import ReminderService, TaskService
 from agent.tasks.timeparse import TimeParseError, TimeParser, extract_time_of_day
 from agent.tools.base import Tool
+from backend.core.logging import get_logger
 from backend.core.security import PermissionScope, RiskLevel
+
+logger = get_logger(__name__)
 
 MAX_SPOKEN_ITEMS = 5
 _FIELD = "string"
@@ -50,6 +54,8 @@ class Clarify:
     """The request cannot be carried out yet; `message` is the question to ask the user."""
 
     message: str
+    field: str | None = None  # the argument the user's short answer fills in ("when"); None = a free-form question
+    merge: bool = False       # append the answer to the earlier value ("tomorrow" + "at 6 PM") instead of replacing it
 
 
 @dataclass(frozen=True)
@@ -218,28 +224,77 @@ class CreateReminderTool(TaskTool):
                 first = next_occurrence(recurrence, now, ctx.parser.zone)
                 return Ready({"message": args.message, "scheduled_at": _iso(first), "recurrence": recurrence.to_json()})
             if not args.when:
-                return Clarify("When should I remind you?")
+                return Clarify("When should I remind you?", field="when")
             parsed = ctx.parser.parse(args.when, now)
         except TimeParseError as exc:
             return Clarify(str(exc))
         if parsed is None:
-            return Clarify("I couldn't understand that time. Could you say it like 'tomorrow at 9 AM'?")
+            return Clarify("I couldn't understand that time. Could you say it like 'tomorrow at 9 AM'?", field="when")
         if not parsed.has_time:
-            return Clarify(f"What time {format_when(parsed.value, now, ctx.parser.zone, with_time=False)}?")
+            return Clarify(f"What time {format_when(parsed.value, now, ctx.parser.zone, with_time=False)}?", field="when", merge=True)
         if parsed.value <= now:
-            return Clarify("That time has already passed. When should I remind you?")
+            return Clarify("That time has already passed. When should I remind you?", field="when")
         return Ready({"message": args.message, "scheduled_at": _iso(parsed.value), "recurrence": None})
 
+    _last_created: dict[str, tuple[str, str, datetime, datetime]] | None = None  # session -> (id, message, when, created_at)
+
+    def plan_correction(self, session_id: str, phrase: str) -> Clarify | Ready | None:
+        """The user just said "make that 6 PM" / "no, tomorrow": a corrected version of the reminder created in this session
+        moments ago. None if there is nothing recent to correct. Keeps the part the user did not change (the time when only the
+        day is given, the day when only the time is given). The old reminder is replaced, not duplicated (`replaces`)."""
+        ctx, now = self._ctx, self._ctx.now()
+        last = (self._last_created or {}).get(session_id)
+        if last is None or ctx.reminders is None or now - last[3] > timedelta(minutes=5):
+            return None
+        reminder_id, message, old_when, _ = last
+        try:
+            current = self._reminders().get_reminder(reminder_id)
+        except Exception:  # noqa: BLE001 - gone or unreadable: nothing safe to correct
+            return None
+        if current.status.value != "scheduled" or current.is_recurring:
+            return None
+        zone = ctx.parser.zone
+        old_local = old_when.astimezone(zone)
+        time_of_day, rest = extract_time_of_day(phrase)
+        try:
+            if time_of_day is not None and not re.sub(r"\b(at|around|by|on|the|make|it|that|to|for)\b", " ", rest).strip():
+                new_local = old_local.replace(hour=time_of_day[0], minute=time_of_day[1], second=0, microsecond=0)  # same day, new time
+            else:
+                parsed = ctx.parser.parse(phrase, now)
+                if parsed is None:
+                    return Clarify("I couldn't understand the new time. Could you say it like 'tomorrow at 9 AM'?")
+                if parsed.has_time:
+                    new_local = parsed.value.astimezone(zone)
+                else:  # only the day changed: keep the time of day
+                    day = parsed.value.astimezone(zone).date()
+                    new_local = datetime.combine(day, old_local.timetz(), tzinfo=zone)
+        except TimeParseError as exc:
+            return Clarify(str(exc))
+        if new_local <= now:
+            return Clarify("That time has already passed. What is the correct time?")
+        return Ready({"message": message, "scheduled_at": _iso(new_local), "recurrence": None, "replaces": reminder_id})
+
     def run(self, *, message: str, scheduled_at: str, recurrence: dict[str, Any] | None,
-            origin_session: str | None = None) -> str:
+            origin_session: str | None = None, replaces: str | None = None) -> str:
         reminders, now = self._reminders(), self._ctx.now()
         rec = Recurrence.model_validate(recurrence) if recurrence else None
+        if replaces:
+            try:
+                reminders.cancel_reminder(replaces)  # a correction replaces the reminder, never adds a second one
+            except Exception as exc:  # noqa: BLE001 - already fired/cancelled: then a new reminder would be a duplicate of nothing
+                logger.warning("Reminder to correct could not be cancelled (%s)", type(exc).__name__)
+                raise
         reminder = reminders.create_reminder(
             message, _from_iso(scheduled_at), recurrence=rec, session_id=origin_session, source="conversation"
         )
+        if origin_session and rec is None:
+            if self._last_created is None:
+                self._last_created = {}
+            self._last_created[origin_session] = (reminder.reminder_id, reminder.message, reminder.scheduled_at, now)
         if rec is not None:
             return f"Okay, I'll remind you {format_recurrence(rec)}: {reminder.message}."
-        return f"Okay, I'll remind you {format_when(reminder.scheduled_at, now, self._ctx.parser.zone)}: {reminder.message}."
+        lead = "Okay, I've changed it. " if replaces else "Okay, "
+        return f"{lead}I'll remind you {format_when(reminder.scheduled_at, now, self._ctx.parser.zone)}: {reminder.message}."
 
 
 class ListTasksTool(TaskTool):

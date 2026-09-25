@@ -52,6 +52,14 @@
 <main>
   <section class="wide"><h2>Integrations</h2><div id="integrations" class="cards">Loading…</div>
     <p class="small muted">Status comes from the integration hub's recorded facts (last sync, last error). Write permissions are off until you turn them on, and every use still asks you first.</p></section>
+  <section class="wide"><h2>Voice</h2><div id="voice">Loading…</div>
+    <p class="small muted">Only state, short text and timings are shown. Audio is never recorded, stored or displayed.</p></section>
+  <section class="wide"><h2>Personal Operator</h2><div id="operator-panel">Loading…</div>
+    <p class="small muted">Workflow summaries only: goal, status, progress, sources, the current step and its risk. No email, page or document text, no hidden reasoning. Anything that sends, submits, uploads, deletes or publishes waits for your confirmation.</p></section>
+  <section class="wide"><h2>Autonomous task</h2><div id="tasks-panel">Loading…</div>
+    <p class="small muted">Concise action descriptions only: no hidden reasoning, page text or credentials. Higher-risk steps wait for your confirmation.</p></section>
+  <section class="wide"><h2>Browser</h2><div id="browser">Loading…</div>
+    <p class="small muted">Only the state is shown: the page address without its query string, the title, and whether the last action was verified. Cookies, credentials and page content are never displayed.</p></section>
   <section><h2>System</h2><div id="system">Loading…</div></section>
   <section><h2>Privacy</h2><div id="privacy">Loading…</div></section>
   <section class="wide"><h2>Services</h2><div id="services">Loading…</div></section>
@@ -102,8 +110,100 @@ async function loadIntegrations() {
   } catch (e) { $("integrations").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
 }
 
+const VOICE_TOGGLES = [["voice_muted", "Mute voice"], ["voice_notifications", "Voice notifications"], ["dnd_enabled", "Do Not Disturb"]];
+async function voiceSet(changes) { try { await api("/voice/settings", { method: "POST", body: JSON.stringify(changes) }); } catch (e) { alert(e.message); } loadVoice(); }
+async function loadVoice() {
+  try {
+    const v = await api("/voice");
+    const s = v.settings, w = v.wake_word, n = v.notifications, l = v.latency_ms || {};
+    const lat = Object.entries(l).map(([k, x]) => esc(k.replace(/_ms$/, "")) + " " + Math.round(x) + " ms").join(" · ");
+    $("voice").innerHTML = "<table>" +
+      "<tr><td>State</td><td><span class=\"pill\">" + esc(v.state) + "</span> <span class=\"muted small\">(" + esc(v.voice_state) + ")</span>" + (v.conversation.active ? " · conversation active" : "") + (v.conversation.pending_action ? " · waiting for your " + esc(v.conversation.pending_action) : "") + "</td></tr>" +
+      "<tr><td>Microphone</td><td>" + esc(v.microphone) + "</td></tr>" +
+      "<tr><td>Wake word</td><td>“" + esc(w.phrase) + "” · " + (w.ready ? "ready" : w.ready === false ? "<span class=\"err\">not ready</span>" : "starting") + " · " + esc(w.health) + " · activations " + w.activations + " (no speech: " + w.false_activations + ") · sensitivity threshold " + w.sensitivity + "</td></tr>" +
+      "<tr><td>Speech recognition</td><td>" + (v.stt.ready ? "ready" : v.stt.ready === false ? "<span class=\"err\">not ready</span>" : "starting") + " · " + esc(v.stt.model) + " / " + esc(v.stt.language) + (v.stt.last_confidence != null ? " · last confidence " + v.stt.last_confidence : "") + "</td></tr>" +
+      "<tr><td>Speech output</td><td>" + esc(v.tts_state) + " · " + esc(v.tts.voice) + " · speed " + v.tts.speed + " · volume " + v.tts.volume + (v.tts.muted ? " · <b>muted</b>" : "") + "</td></tr>" +
+      "<tr><td>Last heard</td><td>" + esc(v.last_transcription ?? "–") + "</td></tr>" +
+      "<tr><td>Last answer (full text)</td><td>" + esc(v.last_response ?? "–") + "</td></tr>" +
+      "<tr><td>Notifications</td><td>voice " + (n.voice_enabled ? "on" : "off") + " · Do Not Disturb " + (n.do_not_disturb ? "<b>on</b>" : "off") + " · queued " + n.queued + " · held back " + n.held + "</td></tr>" +
+      (v.last_error ? "<tr><td>Last error</td><td class=\"err\">" + esc(v.last_error) + "</td></tr>" : "") +
+      (lat ? "<tr><td>Latency (last)</td><td class=\"small\">" + lat + "</td></tr>" : "") + "</table>" +
+      "<div class=\"row\">" + VOICE_TOGGLES.map(([k, t]) => "<button data-k=\"" + k + "\" class=\"" + (s[k] ? "active" : "") + "\">" + t + ": " + (s[k] ? "on" : "off") + "</button>").join(" ") +
+      " <button data-x=\"stop\">Stop speaking</button> <button data-x=\"talk\">Talk to JARVIS</button></div>" +
+      "<div class=\"row small\"><label>Wake sensitivity threshold <input type=\"number\" step=\"0.05\" min=\"0.05\" max=\"0.99\" value=\"" + s.wake_sensitivity + "\" data-n=\"wake_sensitivity\" style=\"width:5em\"></label> " +
+      "<label>Speed <input type=\"number\" step=\"0.1\" min=\"0.5\" max=\"2\" value=\"" + s.tts_speed + "\" data-n=\"tts_speed\" style=\"width:4em\"></label> " +
+      "<label>Volume <input type=\"number\" step=\"0.1\" min=\"0\" max=\"1\" value=\"" + s.tts_volume + "\" data-n=\"tts_volume\" style=\"width:4em\"></label> " +
+      "<label>Silence (s) <input type=\"number\" step=\"0.1\" min=\"0.3\" max=\"5\" value=\"" + s.silence_seconds + "\" data-n=\"silence_seconds\" style=\"width:4em\"></label></div>";
+    document.querySelectorAll("#voice button[data-k]").forEach((b) => b.onclick = () => voiceSet({ [b.dataset.k]: !s[b.dataset.k] }));
+    document.querySelectorAll("#voice input[data-n]").forEach((i) => i.onchange = () => voiceSet({ [i.dataset.n]: parseFloat(i.value) }));
+    document.querySelectorAll("#voice button[data-x]").forEach((b) => b.onclick = async () => { try { await api(b.dataset.x === "stop" ? "/voice/interrupt" : "/voice/activate", { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } setTimeout(loadVoice, 500); });
+  } catch (e) { $("voice").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+}
+
+const BROWSER_DOT = { ready: "🟢", closed: "⚪", opening: "🟡", navigating: "🟡", waiting: "🟡", action: "🟡", recovering: "🟠", closing: "🟡", error: "🔴" };
+async function browserAct(path) { try { await api(path, { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } setTimeout(loadBrowser, 300); }
+const TASK_DOT = { RUNNING: "🟢", VERIFYING: "🟢", PLANNING: "🟡", PAUSED: "🟡", WAITING_FOR_USER: "🟠", WAITING_FOR_PERMISSION: "🟠", COMPLETED: "✅", FAILED: "🔴", CANCELLED: "⚪", BLOCKED: "🟠" };
+async function taskAct(path) { try { await api(path, { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } setTimeout(loadTasks, 300); }
+async function loadTasks() {
+  try {
+    const d = await api("/tasks");
+    const c = d.current;
+    const hist = d.history.slice(0, 8).map((h) => "<li>" + (h.status === "COMPLETED" ? "✓" : h.status === "CANCELLED" ? "○" : "✗") + " " + esc(h.goal) + ' <span class="muted small">' + esc(h.status) + " · " + esc(h.at) + " · " + h.duration_s + " s" + (h.status !== "COMPLETED" && h.outcome ? " · " + esc(h.outcome) : "") + "</span></li>").join("");
+    const live = c ? "<table><tr><td>Current task</td><td>" + esc(c.goal) + "</td></tr><tr><td>Status</td><td>" + (TASK_DOT[c.status] || "") + " " + esc(c.status) + "</td></tr><tr><td>Progress</td><td>" + c.progress[0] + " / " + c.progress[1] + "</td></tr>" +
+      "<tr><td>Current action</td><td>" + esc(c.current_action || "–") + "</td></tr><tr><td>Verification</td><td>" + (c.verified === true ? "✓" : c.verified === false ? "✗" : "–") + "</td></tr><tr><td>Risk</td><td>" + esc(c.risk) + "</td></tr>" +
+      (c.question ? '<tr><td>Waiting for you</td><td class="err">' + esc(c.question) + "</td></tr>" : "") + (c.failure ? '<tr><td>Failure</td><td class="err">' + esc(c.failure) + "</td></tr>" : "") +
+      (c.result ? "<tr><td>Result</td><td>" + esc(c.result) + "</td></tr>" : "") + "</table><ol>" + c.steps.map((s) => "<li>" + esc(s.description) + ' <span class="muted small">' + esc(s.status) + (s.risk !== "READ_ONLY" ? " · " + esc(s.risk) : "") + "</span></li>").join("") + "</ol>" : '<p class="muted">No task yet.</p>';
+    $("tasks-panel").innerHTML = live + '<div class="row"><button data-t="/tasks/pause">Pause</button> <button data-t="/tasks/resume">Resume</button> <button data-t="/tasks/cancel">Stop task</button></div><h3>Recent tasks</h3><ul>' + (hist || '<li class="muted">None yet.</li>') + "</ul>";
+    document.querySelectorAll("#tasks-panel button[data-t]").forEach((x) => x.onclick = () => taskAct(x.dataset.t));
+  } catch (e) { $("tasks-panel").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+}
+
+const WF_DOT = { RUNNING: "🟢", PLANNING: "🟡", READY: "🟡", PAUSED: "🟡", WAITING_FOR_DATA: "🟠", WAITING_FOR_USER: "🟠", WAITING_FOR_CONFIRMATION: "🟠", COMPLETED: "✅", FAILED: "🔴", CANCELLED: "⚪", DRAFT: "⚪" };
+async function wfAct(path, body) { try { await api(path, { method: "POST", body: JSON.stringify(body || {}) }); } catch (e) { alert(e.message); } setTimeout(loadOperator, 300); }
+async function loadOperator() {
+  try {
+    const d = await api("/workflows");
+    const c = d.current;
+    const sys = Object.entries(d.systems).map(([k, v]) => (v ? "🟢 " : "⚪ ") + esc(k)).join(" · ");
+    const hist = d.history.slice(0, 8).map((h) => "<li>" + (h.status === "COMPLETED" ? "✓" : h.status === "CANCELLED" ? "○" : "✗") + " " + esc(h.goal) + ' <span class="muted small">' + esc(h.status) + " · " + esc(h.at) + " · " + h.duration_s + " s" + (h.status !== "COMPLETED" && (h.failure || h.result) ? " · " + esc(h.failure || h.result) : "") + "</span></li>").join("");
+    const live = c ? "<table><tr><td>Current workflow</td><td>" + esc(c.goal) + "</td></tr><tr><td>Status</td><td>" + (WF_DOT[c.status] || "") + " " + esc(c.status) + "</td></tr><tr><td>Progress</td><td>" + c.progress[0] + " / " + c.progress[1] + " · " + c.duration_s + " s</td></tr>" +
+      "<tr><td>Current step</td><td>" + esc(c.current_step || "–") + "</td></tr><tr><td>Risk</td><td>" + esc(c.risk) + "</td></tr><tr><td>Sources</td><td>" + esc(c.sources.join(", ") || "–") + "</td></tr>" +
+      (c.question ? '<tr><td>Waiting for you</td><td class="err">' + esc(c.question) + "</td></tr>" : "") + (c.failure ? '<tr><td>Problem</td><td class="err">' + esc(c.failure) + "</td></tr>" : "") +
+      (c.warnings.length ? "<tr><td>Warnings</td><td>" + c.warnings.map(esc).join("<br>") + "</td></tr>" : "") + "</table><ol>" +
+      c.steps.map((x) => "<li>" + esc(x.description) + ' <span class="muted small">' + esc(x.status) + (x.risk !== "READ_ONLY" ? " · " + esc(x.risk) : "") + (x.note ? " · " + esc(x.note) : "") + "</span></li>").join("") + "</ol>" +
+      '<div class="row">' + (c.status === "WAITING_FOR_CONFIRMATION" ? '<button data-w="/workflows/' + esc(c.workflow_id) + '/confirm" data-a="1">Confirm</button> <button data-w="/workflows/' + esc(c.workflow_id) + '/confirm" data-a="0">Decline</button> ' : "") +
+      '<button data-w="/workflows/' + esc(c.workflow_id) + '/pause">Pause</button> <button data-w="/workflows/' + esc(c.workflow_id) + '/resume">Resume</button> <button data-w="/workflows/' + esc(c.workflow_id) + '/cancel">Cancel workflow</button></div>' : '<p class="muted">No workflow running.</p>';
+    const waiting = d.waiting.filter((w) => !c || w.workflow_id !== c.workflow_id).map((w) => "<li>" + esc(w.goal) + ' <span class="muted small">' + esc(w.status) + "</span></li>").join("");
+    const failed = d.failed.map((w) => "<li>" + esc(w.goal) + ' <span class="err small">' + esc(w.failure_kind || "") + " · " + esc(w.failure) + "</span></li>").join("");
+    $("operator-panel").innerHTML = '<p class="small">Connected systems: ' + sys + "</p>" + live +
+      (waiting ? "<h3>Waiting</h3><ul>" + waiting + "</ul>" : "") + (failed ? "<h3>Failed</h3><ul>" + failed + "</ul>" : "") + "<h3>Recent workflows</h3><ul>" + (hist || '<li class="muted">None yet.</li>') + "</ul>";
+    document.querySelectorAll("#operator-panel button[data-w]").forEach((x) => x.onclick = () => wfAct(x.dataset.w, x.dataset.a !== undefined ? { approve: x.dataset.a === "1" } : {}));
+  } catch (e) { $("operator-panel").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+}
+
+async function loadBrowser() {
+  try {
+    const b = await api("/browser");
+    const tabs = b.tabs.map((t) => "<li>" + (t.active ? "▶ " : "") + esc(t.tab_id) + " · " + esc(t.title || "(untitled)") + ' <span class="muted small">' + esc(t.url) + "</span></li>").join("");
+    $("browser").innerHTML = "<table>" +
+      "<tr><td>Status</td><td>" + (BROWSER_DOT[b.state] || "") + " " + esc(b.state) + (b.enabled ? "" : " (disabled)") + "</td></tr>" +
+      "<tr><td>Active page</td><td>" + esc(b.title || "–") + "</td></tr><tr><td>URL</td><td>" + esc(b.url || "–") + "</td></tr>" +
+      "<tr><td>Tabs</td><td>" + b.tab_count + (b.active_tab ? " · active " + esc(b.active_tab) : "") + "</td></tr>" +
+      "<tr><td>Last action</td><td>" + esc(b.last_action || "–") + (b.last_result ? ' <span class="muted small">' + esc(b.last_result) + "</span>" : "") + "</td></tr>" +
+      "<tr><td>Verified</td><td>" + (b.verified === true ? "✓" : b.verified === false ? "✗ not verified" : "–") + "</td></tr>" +
+      (b.error ? '<tr><td>Last error</td><td class="err">' + esc(b.error) + "</td></tr>" : "") +
+      "<tr><td>Crashes / recoveries</td><td>" + b.crashes + " / " + b.recoveries + "</td></tr></table>" + (tabs ? "<ul>" + tabs + "</ul>" : "") +
+      '<div class="row"><button data-b="/browser/open">Open browser</button> <button data-b="/browser/close">Close browser</button> <button data-b="/browser/stop">Stop current action</button></div>';
+    document.querySelectorAll("#browser button[data-b]").forEach((x) => x.onclick = () => browserAct(x.dataset.b));
+  } catch (e) { $("browser").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+}
+
 async function load() {
   loadIntegrations();
+  loadVoice();
+  loadBrowser();
+  loadTasks();
+  loadOperator();
   try {
     const s = await api("/status");
     $("headline").innerHTML = '<span class="pill ' + esc(s.overall || "") + '">' + esc((s.overall || "unknown").toUpperCase()) + "</span> " +
@@ -155,6 +255,10 @@ async function load() {
 }
 load();
 setInterval(load, 10000);
+setInterval(loadVoice, 2000);
+setInterval(loadBrowser, 3000);
+setInterval(loadTasks, 2000);
+setInterval(loadOperator, 2500);
 </script>
 </body>
 </html>

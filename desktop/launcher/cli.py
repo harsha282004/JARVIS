@@ -63,7 +63,7 @@ def _build_application(settings: Settings, exit_event: threading.Event, started_
     services = build_runtime_services(settings, task_system, PROJECT_ROOT)
     bus = services.bus
     router = services.intelligence_router
-    manager = RuntimeManager(lambda: build_voice_engine(settings, task_system, router, bus), start_paused=services.start_paused)
+    manager = RuntimeManager(lambda: build_voice_engine(settings, task_system, router, bus, services.voice), start_paused=services.start_paused)
     services.attach_manager(manager)
     tray = None
     if settings.JARVIS_TRAY_ENABLED:
@@ -104,13 +104,13 @@ def _build_application(settings: Settings, exit_event: threading.Event, started_
         from backend.api.server import ApiServer
 
         set_context(AppContext(settings=settings, bus=bus, health=services.health, privacy=services.privacy, prefs=services.prefs, audit=services.audit,
-                               center=services.center, intelligence=services.intelligence_service, manager=manager, task_system=task_system, hub=services.hub))
+                               center=services.center, intelligence=services.intelligence_service, manager=manager, task_system=task_system, hub=services.hub, voice=services.voice, browser=services.browser, autonomy=services.autonomy, operator=services.operator))
         if settings.JARVIS_API_ENABLED:
             background.append(ApiServer(settings.API_HOST, settings.API_PORT))
     except Exception as exc:  # noqa: BLE001 - the local dashboard is optional
         logger.error("Local API could not be prepared (%s)", type(exc).__name__)
     return JarvisApplication(manager, exit_event, tray=tray, power=power, scheduler=scheduler, background=background, bus=bus,
-                             cleanup=[dispose_engine], started_at=started_at)
+                             cleanup=([services.operator.shutdown] if services.operator is not None else []) + ([services.autonomy.shutdown] if services.autonomy is not None else []) + ([services.browser.shutdown] if services.browser is not None else []) + [dispose_engine], started_at=started_at)
 
 
 def _log_startup(settings: Settings) -> None:

@@ -77,7 +77,25 @@ class OpenWakeWordProvider(WakeWordProvider):
     def frame_samples(self) -> int:
         return _FRAME_SAMPLES
 
+    @property
+    def threshold(self) -> float:
+        return self._threshold
+
+    def set_threshold(self, value: float) -> None:
+        """Sensitivity is adjustable while running: lower = more sensitive (more false activations)."""
+        self._threshold = min(max(float(value), 0.05), 0.99)
+
+    last_score: float = 0.0
+
+    def reset(self) -> None:
+        """Forget buffered audio, so a detection cannot fire twice from the same utterance."""
+        try:
+            self._model.reset()
+        except Exception:  # noqa: BLE001 - older/newer builds may not expose reset(); harmless
+            pass
+        self.last_score = 0.0
+
     def process(self, frame: np.ndarray) -> bool:
         scores = self._model.predict(frame)
-        score = scores.get(self._model_name, 0.0)
-        return score >= self._threshold
+        self.last_score = float(scores.get(self._model_name, 0.0))
+        return self.last_score >= self._threshold

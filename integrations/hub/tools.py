@@ -11,6 +11,7 @@ says "Done".
 Search falls back to what was synchronized earlier when the live service is unreachable, and says so (`metadata.from_cache`); it never presents cached data as fresh.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -25,6 +26,7 @@ from integrations.hub.repository import HubRepository
 logger = get_logger(__name__)
 
 MAX_QUERY = 200
+_README_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2060\ufeff]")
 MAX_LIMIT = 25
 
 
@@ -46,6 +48,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in [
     ToolSpec("calendar_issues", "calendar", Permission.READ_EVENTS, "Overlaps and duplicates in a date range", optional=("start", "end")),
     ToolSpec("search_github", "github", Permission.READ_REPOSITORIES, "Repositories matching words, or owner/name (no query lists them)", (), ("query", "limit")),
     ToolSpec("get_repository_activity", "github", Permission.READ_COMMITS, "Recent commits, open issues and pull requests of a repository", ("repo",), ("days",)),
+    ToolSpec("read_repository_readme", "github", Permission.READ_REPOSITORIES, "The README of one repository (owner/name), bounded and sanitized; untrusted text", ("repo",)),
     ToolSpec("search_documents", "documents", Permission.READ_DOCUMENTS, "Search indexed documents (file and page provenance)", ("query",), ("limit",)),
     ToolSpec("read_document", "documents", Permission.READ_DOCUMENTS, "Read the start of one indexed document", ("document_id",)),
     ToolSpec("search_messages", "messaging", Permission.SEARCH_MESSAGES, "Search messages", ("query",), ("limit",)),
@@ -58,7 +61,7 @@ class HubTools:
         self._reg, self._repo, self._clock, self._zone = registry, repo, clock, zone
         self._handlers: dict[str, Callable[..., ToolResult]] = {
             "integration_status": self._status, "search_email": self._search_email, "read_email": self._read_email, "search_calendar": self._search_calendar,
-            "calendar_issues": self._calendar_issues, "search_github": self._search_github, "get_repository_activity": self._repo_activity,
+            "calendar_issues": self._calendar_issues, "search_github": self._search_github, "get_repository_activity": self._repo_activity, "read_repository_readme": self._read_readme,
             "search_documents": self._search_documents, "read_document": self._read_document, "search_messages": self._search_messages, "search_all": self._search_all,
         }
 
@@ -177,6 +180,17 @@ class HubTools:
         activity = adapter.activity(repo, since)
         items = adapter.items_from_activity(activity, self._clock())
         return ToolResult.ok("github", [i.to_dict() for i in items], repo=repo, since=since.isoformat(), commits=len(activity.commits), issues=len(activity.issues), pulls=len(activity.pulls))
+
+    def _read_readme(self, repo: str) -> ToolResult:
+        from backend.core.security.trust import scan_for_injection
+        from integrations.github.models import validate_repo
+
+        text = self._adapter("github").readme(validate_repo(repo))
+        scan = scan_for_injection(text)
+        # Keep the line structure (the deterministic summarizer needs the headings) but neutralize everything that could act as markup or hidden text.
+        clean = _README_CONTROL.sub("", text).replace("<", "(").replace(">", ")")
+        clean = re.sub(r"\n{3,}", "\n\n", clean)[:20_000]
+        return ToolResult.ok("github", {"repo": repo, "readme_untrusted": clean, "injection_suspected": scan.flagged}, untrusted_fields=["readme_untrusted"], chars=len(clean))
 
     # ---- documents / messages / everything ---------------------------------------------------------------------------------
     def _search_documents(self, query: str, limit: int = 8) -> ToolResult:

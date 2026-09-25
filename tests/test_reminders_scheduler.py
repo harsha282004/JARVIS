@@ -297,7 +297,7 @@ def test_scheduler_delivers_a_due_reminder_once(session_factory):
     clock.advance(minutes=1, seconds=5)
     assert sched.run_once() == 1
     assert sched.run_once() == 0 and sched.run_once() == 0  # checking repeatedly never re-triggers it
-    assert notifier.sent == [("Reminder: submit my assignment", {"reminder_id": r.reminder_id, "task_id": None, "missed": False})]
+    assert notifier.sent == [("Reminder: submit my assignment", {"reminder_id": r.reminder_id, "task_id": None, "missed": False, "priority": "high"})]
     assert reminders.get_reminder(r.reminder_id).status is ReminderStatus.TRIGGERED
 
 

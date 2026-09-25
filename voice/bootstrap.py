@@ -493,7 +493,7 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
     )
 
 
-def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None, intelligence=None, bus=None) -> VoiceEngine:
+def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None, intelligence=None, bus=None, voice=None) -> VoiceEngine:
     """Construct a VoiceEngine wired to the providers named in `settings`.
 
     Raises ProviderNotConfiguredError / AudioDeviceError with a clear
@@ -506,7 +506,7 @@ def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None
             "detection to be enabled in Phase 1"
         )
 
-    return VoiceEngine(
+    engine = VoiceEngine(
         wakeword=_build_wakeword(settings),
         stt=_build_stt(settings),
         conversation=_build_conversation(settings, task_system, intelligence, bus),
@@ -516,8 +516,17 @@ def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None
         ),
         # No separate output-device setting in Phase 1 — playback uses the
         # system default speaker.
-        audio_output=AudioOutput(),
+        audio_output=AudioOutput(volume=settings.VOICE_TTS_VOLUME),
         sample_rate=settings.AUDIO_SAMPLE_RATE,
         listen_seconds=settings.AUDIO_LISTEN_SECONDS,
         announcements=task_system.announcements if task_system is not None else None,
+        # Phase 19: persisted settings, live status, structured log and the announcement policy (None = the original fixed-window engine).
+        settings=voice.settings if voice is not None else None,
+        use_vad=settings.VOICE_USE_VAD,
+        policy=voice.policy if voice is not None else None,
+        status=voice.status if voice is not None else None,
+        log=voice.log if voice is not None else None,
     )
+    if voice is not None:
+        voice.engine_interrupt = engine.interrupt
+    return engine

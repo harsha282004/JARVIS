@@ -77,6 +77,7 @@ class FakeGitHub:
                        {"number": 8, "title": "A pull request", "state": "open", "pull_request": {}, "user": {"login": "x"}, "created_at": "2026-09-20T00:00:00Z", "updated_at": "2026-09-23T00:00:00Z"}]
         self.pulls = [{"number": 8, "title": "Add GitHub adapter", "state": "open", "draft": False, "user": {"login": "harsh"}, "created_at": "2026-09-22T00:00:00Z", "updated_at": "2026-09-23T00:00:00Z", "merged_at": None}]
         self.etags = True
+        self.readme = "# Demo\n\nA demo project.\n\n## Requirements\n\n- Python 3.11\n- PostgreSQL 15\n\n## Installation\n\npip install -r requirements.txt\n"
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -96,6 +97,10 @@ class FakeGitHub:
             body = self.issues
         elif path.endswith("/pulls"):
             body = self.pulls
+        elif path.endswith("/readme"):
+            import base64
+
+            body = {"name": "README.md", "encoding": "base64", "content": base64.b64encode(self.readme.encode()).decode()}
         elif path.endswith("/branches"):
             body = [{"name": "main", "protected": True}]
         elif path.startswith("/repos/"):

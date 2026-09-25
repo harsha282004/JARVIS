@@ -24,6 +24,10 @@ class AppContext:
     manager: Any = None
     task_system: Any = None
     hub: Any = None
+    voice: Any = None
+    browser: Any = None
+    autonomy: Any = None
+    operator: Any = None
     # Required on every API request except /health and the dashboard page, which embeds it (same-origin only).
     api_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
 

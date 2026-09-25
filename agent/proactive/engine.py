@@ -174,7 +174,8 @@ class ProactiveEngine:
             report.suppressed[f"claim: {claim.reason}"] += 1  # another worker has it, it is done, or it is backing off
             return
         delivered_on: list[str] = []
-        metadata = {"proactive": True, "candidate_id": claim.notification_id, "signal_type": signal.signal_type.value, "source_type": signal.source_type.value}
+        metadata = {"proactive": True, "candidate_id": claim.notification_id, "signal_type": signal.signal_type.value, "source_type": signal.source_type.value,
+                    "priority": {1: "low", 2: "normal", 3: "high", 4: "critical"}.get(int(candidate.priority), "normal")}
         for channel in candidate.delivery_channels:
             notifier = self._notifiers.get(channel)
             if notifier is None:

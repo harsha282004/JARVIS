@@ -153,6 +153,15 @@ class RuntimeManager:
         engine.request_activation()
         return True
 
+    def interrupt_speech(self) -> bool:
+        """Stop whatever JARVIS is saying right now (tray / dashboard "Stop speaking"). False if there is no engine."""
+        with self._state_lock:
+            engine = self._engine
+        if engine is None:
+            return False
+        engine.interrupt()
+        return True
+
     def handle_system_resume(self) -> None:
         """Called after Windows wakes from sleep: reacquire the microphone.
 

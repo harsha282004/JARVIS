@@ -7,7 +7,8 @@ VoiceEngine directly. An action that is not available (its service is not enable
 Menu:
     JARVIS / <status> / <microphone state>
     Talk to JARVIS - Today's Briefing - Tasks - Reminders - Memory - Integrations - Settings
-    Pause JARVIS (Resume JARVIS) - Private mode - Restart JARVIS - Exit
+    Stop speaking - Open dashboard - Mute voice - Voice notifications - Do Not Disturb
+    Pause listening (Resume listening) - Private mode - Restart JARVIS - Exit
 """
 
 import threading
@@ -73,6 +74,27 @@ class TrayActions:
     open_settings: Callable[[], None] | None = None
     toggle_private: Callable[[], None] | None = None
     talk: Callable[[], bool] | None = None
+    # Phase 19 voice controls. Each toggle has a matching state reader so the menu shows what is really on.
+    stop_speaking: Callable[[], bool] | None = None
+    toggle_mute: Callable[[], None] | None = None
+    is_muted: Callable[[], bool] | None = None
+    toggle_voice_notifications: Callable[[], None] | None = None
+    voice_notifications_on: Callable[[], bool] | None = None
+    toggle_dnd: Callable[[], None] | None = None
+    dnd_on: Callable[[], bool] | None = None
+    open_dashboard: Callable[[], None] | None = None
+    # Phase 20 browser controls (not every browser operation: those are voice/API tools)
+    open_browser: Callable[[], None] | None = None
+    close_browser: Callable[[], None] | None = None
+    stop_browser_action: Callable[[], None] | None = None
+    browser_open: Callable[[], bool] | None = None
+    # Phase 21 autonomous task controls
+    task_label: Callable[[], str] | None = None
+    pause_task: Callable[[], None] | None = None
+    resume_task: Callable[[], None] | None = None
+    stop_task: Callable[[], None] | None = None
+    task_running: Callable[[], bool] | None = None
+    task_paused: Callable[[], bool] | None = None
 
 
 class TrayController:
@@ -161,15 +183,29 @@ class TrayController:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Talk to JARVIS", self._talk,
                              enabled=lambda item: a.talk is not None and state() is RuntimeState.RUNNING),
+            pystray.MenuItem("Stop speaking", self._stop_speaking, enabled=lambda item: a.stop_speaking is not None and state() is RuntimeState.RUNNING),
             pystray.MenuItem("Today's Briefing", self._shower(a.show_briefing, "Today's briefing"), enabled=lambda item: a.show_briefing is not None),
             pystray.MenuItem("Tasks", self._shower(a.show_tasks, "Tasks"), enabled=lambda item: a.show_tasks is not None),
             pystray.MenuItem("Reminders", self._shower(a.show_reminders, "Reminders"), enabled=lambda item: a.show_reminders is not None),
             pystray.MenuItem("Memory", self._shower(a.show_memory, "Memory"), enabled=lambda item: a.show_memory is not None),
             pystray.MenuItem("Integrations", self._shower(a.show_integrations, "Integrations"), enabled=lambda item: a.show_integrations is not None),
+            pystray.MenuItem("Open dashboard", self._dashboard, enabled=lambda item: a.open_dashboard is not None),
+            pystray.MenuItem(lambda item: a.task_label() if a.task_label else "No task", None, enabled=False, visible=lambda item: a.task_label is not None),
+            pystray.MenuItem("Pause task", self._toggle(a.pause_task), enabled=lambda item: a.pause_task is not None and bool(a.task_running and a.task_running()) and not (a.task_paused and a.task_paused())),
+            pystray.MenuItem("Resume task", self._toggle(a.resume_task), enabled=lambda item: a.resume_task is not None and bool(a.task_paused and a.task_paused())),
+            pystray.MenuItem("Stop task", self._toggle(a.stop_task), enabled=lambda item: a.stop_task is not None and bool(a.task_running and a.task_running())),
+            pystray.MenuItem("Open browser", self._toggle(a.open_browser), enabled=lambda item: a.open_browser is not None),
+            pystray.MenuItem("Close browser", self._toggle(a.close_browser), enabled=lambda item: a.close_browser is not None and bool(a.browser_open and a.browser_open())),
+            pystray.MenuItem("Stop browser action", self._toggle(a.stop_browser_action), enabled=lambda item: a.stop_browser_action is not None and bool(a.browser_open and a.browser_open())),
             pystray.MenuItem("Settings", self._settings, enabled=lambda item: a.open_settings is not None),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Mute voice", self._toggle(a.toggle_mute), checked=lambda item: bool(a.is_muted and a.is_muted()), enabled=lambda item: a.toggle_mute is not None),
+            pystray.MenuItem("Voice notifications", self._toggle(a.toggle_voice_notifications), checked=lambda item: bool(a.voice_notifications_on and a.voice_notifications_on()),
+                             enabled=lambda item: a.toggle_voice_notifications is not None),
+            pystray.MenuItem("Do Not Disturb", self._toggle(a.toggle_dnd), checked=lambda item: bool(a.dnd_on and a.dnd_on()), enabled=lambda item: a.toggle_dnd is not None),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                lambda item: "Resume JARVIS" if state() in (RuntimeState.PAUSED, RuntimeState.STOPPED, RuntimeState.ERROR) else "Pause JARVIS",
+                lambda item: "Resume listening" if state() in (RuntimeState.PAUSED, RuntimeState.STOPPED, RuntimeState.ERROR) else "Pause listening",
                 self._pause_or_resume,
                 enabled=lambda item: state() in (RuntimeState.RUNNING, RuntimeState.PAUSED, RuntimeState.STOPPED, RuntimeState.ERROR),
             ),
@@ -205,6 +241,25 @@ class TrayController:
     def _talk(self, icon=None, item=None) -> None:
         if self._actions.talk is not None:
             self._actions.talk()
+
+    def _stop_speaking(self, icon=None, item=None) -> None:
+        if self._actions.stop_speaking is not None:
+            self._actions.stop_speaking()
+
+    def _dashboard(self, icon=None, item=None) -> None:
+        if self._actions.open_dashboard is not None:
+            self._actions.open_dashboard()
+
+    def _toggle(self, action: Callable[[], None] | None) -> Callable:
+        def run(icon=None, item=None) -> None:
+            if action is not None:
+                try:
+                    action()
+                except Exception as exc:  # noqa: BLE001 - a menu click must never crash the tray
+                    logger.warning("Tray toggle failed (%s)", type(exc).__name__)
+            self.refresh()
+
+        return run
 
     def _settings(self, icon=None, item=None) -> None:
         if self._actions.open_settings is not None:

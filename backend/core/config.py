@@ -73,7 +73,69 @@ class Settings(BaseSettings):
     TTS_MODEL_PATH: str = ""
     TTS_VOICE: str = "en_US-lessac-medium"
 
-    # --- Conversation (in-memory only) ---
+    # --- Voice: natural conversation (Phase 19). Defaults for the persisted voice settings (.jarvis/voice_settings.json wins once
+    # the user changes something from the tray or dashboard). ---
+    # End of speech is detected by silence instead of the fixed AUDIO_LISTEN_SECONDS window (which is kept only when this is false).
+    VOICE_USE_VAD: bool = True
+    VOICE_SILENCE_SECONDS: float = Field(default=1.0, ge=0.3, le=5.0)
+    VOICE_MAX_UTTERANCE_SECONDS: float = Field(default=15.0, ge=2.0, le=60.0)
+    VOICE_SPEECH_THRESHOLD: float = Field(default=0.015, ge=0.001, le=0.5)
+    # After the wake word, follow-ups need no wake word until this much silence.
+    VOICE_CONVERSATION_TIMEOUT_SECONDS: float = Field(default=20.0, ge=3.0, le=600.0)
+    VOICE_TTS_SPEED: float = Field(default=1.0, ge=0.5, le=2.0)
+    VOICE_TTS_VOLUME: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Spoken answers longer than this are shortened for the ear; the full text stays on the dashboard.
+    VOICE_SPOKEN_MAX_CHARS: int = Field(default=320, ge=80, le=2000)
+    # Whether a critical alert may be spoken during Do Not Disturb.
+    VOICE_DND_ALLOW_CRITICAL: bool = True
+
+    # --- Browser agent (Phase 20). The browser opens on demand (never at start-up) and only through the registered browser tools. ---
+    BROWSER_ENABLED: bool = True
+    # auto = try the installed Microsoft Edge, then Chrome, then Playwright's bundled Chromium; or msedge | chrome | chromium.
+    BROWSER_TYPE: str = "auto"
+    BROWSER_HEADLESS: bool = False
+    # A profile dedicated to JARVIS (never your everyday browser profile), so a sign-in you complete yourself persists.
+    BROWSER_PROFILE_DIR: str = ".jarvis/browser_profile"
+    BROWSER_DEFAULT_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=120)
+    BROWSER_NAVIGATION_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=180)
+    BROWSER_MAX_TABS: int = Field(default=8, ge=1, le=50)
+    BROWSER_RETRIES: int = Field(default=2, ge=0, le=5)  # only for safe, repeatable operations (loading, reading, finding)
+    BROWSER_DOWNLOAD_DIR: str = ".jarvis/downloads"
+    BROWSER_UPLOAD_DIR: str = ".jarvis/uploads"  # the only folder a file may be uploaded from
+    BROWSER_SCREENSHOT_MODE: str = "memory"  # off | memory (measured, not kept) | disk (saved under .jarvis/screenshots)
+    BROWSER_ALLOW_PRIVATE_HOSTS: bool = False  # localhost / LAN / cloud-metadata addresses stay blocked unless you turn this on
+    BROWSER_SEARCH_URL: str = "https://www.bing.com/search?q={query}"  # DuckDuckGo shows a human-check to automated browsers, which JARVIS never tries to solve
+
+    # --- Autonomous agent (Phase 21): multi-step tasks over the browser and the integrations, every step behind the tool router and permission checks ---
+    AUTONOMY_ENABLED: bool = True
+    AUTONOMY_MAX_DURATION_SECONDS: float = Field(default=180.0, gt=0, le=3600)
+    AUTONOMY_MAX_STEPS: int = Field(default=25, ge=1, le=100)
+    AUTONOMY_MAX_TOOL_CALLS: int = Field(default=40, ge=1, le=300)
+    AUTONOMY_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    AUTONOMY_MAX_REPLANS: int = Field(default=3, ge=0, le=10)
+    AUTONOMY_LOOP_THRESHOLD: int = Field(default=3, ge=2, le=10)  # the same action with the same page state this many times stops the task
+    AUTONOMY_MAX_CONSECUTIVE_FAILURES: int = Field(default=3, ge=1, le=10)
+    AUTONOMY_OBSERVATION_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=120)
+    AUTONOMY_CONFIRMATION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=3600)
+    AUTONOMY_BROWSER_TASK_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=600)
+    AUTONOMY_INLINE_WAIT_SECONDS: float = Field(default=25.0, ge=0, le=300)  # how long a spoken request waits for a quick task before "I'm working on it"
+    AUTONOMY_VOICE_PROGRESS: bool = True                                     # short spoken progress updates ("I found your repository.")
+    AUTONOMY_HISTORY_SIZE: int = Field(default=30, ge=1, le=200)
+
+    # Personal Operator (Phase 22): end-to-end workflows over Gmail, Calendar, Tasks, Reminders, GitHub, Documents, Memory and the browser
+    WORKFLOWS_ENABLED: bool = True
+    WORKFLOW_MAX_CONCURRENT: int = Field(default=2, ge=1, le=6)
+    WORKFLOW_MAX_DURATION_SECONDS: float = Field(default=240.0, gt=0, le=3600)
+    WORKFLOW_MAX_STEPS: int = Field(default=14, ge=1, le=40)
+    WORKFLOW_MAX_TOOL_CALLS: int = Field(default=30, ge=1, le=200)
+    WORKFLOW_MAX_RETRIES: int = Field(default=2, ge=0, le=5)                  # reads only; a write is never retried
+    WORKFLOW_MAX_SYSTEMS: int = Field(default=5, ge=1, le=8)                   # integrations one workflow may touch
+    WORKFLOW_CONFIRMATION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=3600)
+    WORKFLOW_INLINE_WAIT_SECONDS: float = Field(default=12.0, ge=0, le=120)
+    WORKFLOW_HISTORY_SIZE: int = Field(default=12, ge=1, le=100)
+    WORKFLOW_PROACTIVE_ENABLED: bool = True                                    # proactive intelligence may start suggestion-only (read-only) workflows
+
+
     # Inactivity after which the current conversation session ends.
     JARVIS_CONVERSATION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0)
     # Most recent user/assistant messages kept as context (minimum 2).

@@ -19,6 +19,7 @@ from typing import Any
 
 from agent.events.dates import WhenKind, resolve_when
 from agent.intelligence.confirmation import ActionReport
+from agent.intelligence.followups import FollowUps, Last
 from agent.intelligence.findings import Offer
 from agent.intelligence.models import Answer, Provenance, SourceKind, Statement, fact
 from agent.intelligence.phrasing import clock, day_word, join_and, quoted, when_phrase
@@ -60,15 +61,19 @@ def _canonical(name: str) -> str:
     return _NAMES.get(name.strip().lower(), name.strip().lower())
 
 
-class HubRouter:
+class HubRouter(FollowUps):
     def __init__(self, hub: IntegrationHub, service, *, remember=None):
         """`service` is the IntelligenceService (context, executor, confirmations, audit, timeline); `remember(text)` stores an explicit user memory."""
         self._hub, self._svc, self._remember = hub, service, remember
         self._tp = TimeParser(service.zone)
+        self._last: Last | None = None
 
     # ---- entry -------------------------------------------------------------------------------------------------------------
     def handle(self, t: str, original: str, session_id: str) -> str | None:
         reg = self._hub.registry
+        followed = self._follow_up(t)
+        if followed is not None:
+            return followed
         m = _CONNECTED.match(t)
         if m:
             return self._connected(_canonical(m.group("n")) if m.groupdict().get("n") else None)
@@ -240,6 +245,7 @@ class HubRouter:
             flag = f" ({md.get('topic')}, {str(md.get('importance', '')).lower()})" if md.get("topic") not in (None, "other") else ""
             lines.append(f"from {md.get('sender', 'a sender')}: {quoted(i['title'], 60)}{when}{flag}")
             stmts.append(fact(f"Gmail has an email {quoted(i['title'], 60)}.", self._prov(i, f"email {quoted(i['title'], 40)}")))
+        self._last = Last("emails", list(items[:5]), about.strip(), None, self._svc.now())
         more = f" and {len(items) - 5} more" if len(items) > 5 else ""
         note = " These came from my saved copies because Gmail is unreachable right now." if r.metadata.get("from_cache") else ""
         text = f"I found {len(items)} email{'s' if len(items) != 1 else ''}{about}: " + "; ".join(lines) + more + "." + note
@@ -263,6 +269,8 @@ class HubRouter:
         if not r.success:
             return self._fail(r)
         events = r.data
+        if not at:
+            self._last = Last("schedule", list(events[:8]), label, day_word_ or "today", now)
         if at:
             hhmm = parse_clock(at.replace(".", ""))
             if hhmm is None:

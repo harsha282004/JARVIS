@@ -13,7 +13,6 @@ external service (no email, WhatsApp, push or cloud).
 import re
 import threading
 from abc import ABC, abstractmethod
-from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -62,15 +61,37 @@ class DesktopNotifier(NotificationService):
             raise NotificationError(f"Desktop notification failed ({type(exc).__name__})") from None
 
 
+PRIORITIES = ("low", "normal", "high", "critical")  # lowest to highest; the voice layer decides what may interrupt
+
+
+def normalize_priority(value: Any) -> str:
+    text = str(getattr(value, "name", value)).lower()
+    if text == "important":
+        return "high"
+    return text if text in PRIORITIES else "normal"
+
+
+class Announcement:
+    """One queued voice announcement: the text and how much it matters."""
+
+    __slots__ = ("text", "priority")
+
+    def __init__(self, text: str, priority: str = "normal"):
+        self.text = text
+        self.priority = normalize_priority(priority)
+
+
 class AnnouncementQueue:
     """Thread-safe, bounded hand-off from the scheduler thread to the VoiceEngine thread.
 
     The VoiceEngine marks the queue as accepting while it is running and speaks queued text
     only between conversations, on its own thread, so nothing else touches the audio devices.
+    The highest priority is taken first (a critical alert is never stuck behind a low one); within a priority, oldest first.
+    When full, a new item replaces the oldest *lower*-priority one, else it is refused.
     """
 
     def __init__(self, max_size: int = 10):
-        self._items: deque[str] = deque()
+        self._items: list[Announcement] = []
         self._max = max_size
         self._lock = threading.Lock()
         self._accepting = False
@@ -84,16 +105,35 @@ class AnnouncementQueue:
         with self._lock:
             self._accepting = value
 
-    def put(self, text: str) -> bool:
+    def put(self, text: str, priority: str = "normal") -> bool:
+        item = Announcement(text, priority)
         with self._lock:
-            if not self._accepting or len(self._items) >= self._max:
+            if not self._accepting:
                 return False
-            self._items.append(text)
+            if len(self._items) >= self._max:
+                lowest = min(self._items, key=lambda a: PRIORITIES.index(a.priority))
+                if PRIORITIES.index(lowest.priority) >= PRIORITIES.index(item.priority):
+                    return False
+                self._items.remove(lowest)
+            self._items.append(item)
             return True
 
-    def get_nowait(self) -> str | None:
+    def get_item_nowait(self) -> Announcement | None:
         with self._lock:
-            return self._items.popleft() if self._items else None
+            if not self._items:
+                return None
+            best = max(range(len(self._items)), key=lambda i: (PRIORITIES.index(self._items[i].priority), -i))
+            return self._items.pop(best)
+
+    def get_nowait(self) -> str | None:
+        item = self.get_item_nowait()
+        return item.text if item is not None else None
+
+    def has_at_least(self, priority: str) -> bool:
+        """True if something at `priority` or higher is waiting (used to decide whether a conversation may be interrupted)."""
+        floor = PRIORITIES.index(normalize_priority(priority))
+        with self._lock:
+            return any(PRIORITIES.index(a.priority) >= floor for a in self._items)
 
     def __len__(self) -> int:
         with self._lock:
@@ -113,7 +153,8 @@ class VoiceNotifier(NotificationService):
             raise NotificationError("Empty notification")
         if not self._queue.accepting:
             raise NotificationError("The voice engine is not running")
-        if not self._queue.put(text):
+        priority = normalize_priority((metadata or {}).get("priority", "normal"))
+        if not self._queue.put(text, priority):
             raise NotificationError("The voice announcement queue is full")
 
 

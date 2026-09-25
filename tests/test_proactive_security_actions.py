@@ -189,7 +189,7 @@ def test_malicious_email_and_calendar_text_is_only_ever_quoted_and_changes_nothi
     assert snapshot(env) == before  # no task or event was created, changed, completed or deleted
     assert env.calendar_client.mutations() == []  # the calendar was not touched
     assert {c[0] for c in env.mailbox.calls} == {"search"}  # the mailbox was only searched (nothing sent, marked or deleted)
-    assert all(set(md) == {"proactive", "candidate_id", "signal_type", "source_type"} for md in env.desktop.metadata)  # no content beyond ids and types
+    assert all(set(md) == {"proactive", "candidate_id", "signal_type", "source_type", "priority"} for md in env.desktop.metadata)  # no content beyond ids and types
 
 
 def test_a_notification_cannot_trigger_any_tool_or_grant_any_permission(session_factory):

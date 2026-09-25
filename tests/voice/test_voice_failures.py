@@ -29,28 +29,22 @@ class DownLLM(LLMProvider):
         raise LLMProviderError("Ollama unreachable")
 
 
-def test_stt_failure_raises_a_typed_error_and_run_forever_survives_it():
-    e = engine(stt=BrokenSTT())
-    with pytest.raises(VoiceProviderError):
-        e.run_once()
-    calls = {"n": 0}
-    real = e.run_once
-
-    def once(*a, **k):
-        calls["n"] += 1
-        if calls["n"] >= 3:
-            raise KeyboardInterrupt  # stop the loop after proving it kept going
-        return real(*a, **k)
-
-    e.run_once = once
-    with pytest.raises(KeyboardInterrupt):
-        e.run_forever()
-    assert calls["n"] == 3 and e.state == VoiceState.WAITING  # two failed cycles did not end the loop
+def test_stt_failure_is_recovered_and_reported_not_a_crash():
+    """Phase 19: a dead recognizer no longer crashes the worker; JARVIS says so and returns to listening."""
+    tts = FakeTTS()
+    e = engine(stt=BrokenSTT(), tts=tts)
+    assert e.run_once() is None
+    assert e.state == VoiceState.WAITING
+    assert "You can still use the dashboard" in tts.spoken[-1]
+    assert e.status.snapshot()["stt"]["ready"] is False
 
 
-def test_tts_failure_is_typed_not_silent():
-    with pytest.raises(VoiceProviderError):
-        engine(tts=BrokenTTS()).run_once()
+def test_tts_failure_keeps_the_text_answer_and_reports_it():
+    e = engine(tts=BrokenTTS())
+    assert e.run_once() == "I don't have access to a calendar yet."  # the answer exists (dashboard), speech failed
+    snap = e.status.snapshot()
+    assert snap["tts_state"] == "TTS_ERROR" and snap["last_response"] == "I don't have access to a calendar yet."
+    assert e.state == VoiceState.WAITING
 
 
 def test_llm_down_is_reported_and_state_returns_to_waiting():

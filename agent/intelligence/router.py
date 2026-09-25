@@ -91,9 +91,20 @@ _ACK = re.compile(r"^(?:acknowledge|dismiss|clear|mark as read) (?:all )?(?:the 
 
 
 class IntelligenceRouter:
-    def __init__(self, service: IntelligenceService, hub_router=None):
+    def __init__(self, service: IntelligenceService, hub_router=None, browser_router=None, autonomy_router=None, operator_router=None):
         self._svc = service
+        self._operator_router = operator_router  # Phase 22: personal workflows across the user's systems (workflows.operator.OperatorIntentRouter)
+        self._autonomy_router = autonomy_router  # Phase 21: multi-step goals and task controls (autonomy.manager.AutonomyRouter)
+        self._browser_router = browser_router  # Phase 20: spoken browser control (browser.voice.BrowserRouter)
         self._hub_router = hub_router  # Phase 18: spoken requests about the integrations (agent.intelligence.hub_router.HubRouter)
+
+    def cancel_task(self) -> bool:
+        """Voice "Stop"/"Cancel": stop a workflow and/or an autonomous task, if one is running. False when there is none."""
+        stopped = bool(self._operator_router is not None and self._operator_router.cancel_task())
+        return bool(self._autonomy_router is not None and self._autonomy_router.cancel_task()) or stopped
+
+    def task_active(self) -> bool:
+        return bool(self._autonomy_router is not None and self._autonomy_router.task_active()) or bool(self._operator_router is not None and self._operator_router.task_active())
 
     @property
     def service(self) -> IntelligenceService:
@@ -103,6 +114,10 @@ class IntelligenceRouter:
         """A reply if this is ours, otherwise None. Never raises: a failure gives an honest 'couldn't work that out'."""
         svc = self._svc
         try:
+            if self._operator_router is not None and level is TrustLevel.USER:  # "Stop"/"Cancel the workflow" ends a workflow waiting for a yes; it is not just a "no"
+                stopped = self._operator_router.intercept_cancel(text, session_id)
+                if stopped is not None:
+                    return IntelligenceReply(stopped, "(I stopped a workflow.)")
             answered = svc.confirmations.respond(text, session_id, level=level)
             if answered is not None:
                 svc.after_change()  # a confirmed action ran: the cached view of the sources is stale
@@ -128,10 +143,22 @@ class IntelligenceRouter:
         if pref is not None:
             return IntelligenceReply(pref.text, "(I updated or read the user's notification preferences.)")
 
+        if self._operator_router is not None:  # Phase 22: a personal workflow (email -> task -> reminder, briefing, ...) or a control phrase for one
+            handled = self._operator_router.handle(t, original, session_id)
+            if handled is not None:
+                return IntelligenceReply(handled, "(I carried out or discussed a personal workflow.)")
+        if self._autonomy_router is not None:  # first: an answer to a waiting task, a control phrase, or a multi-step goal
+            handled = self._autonomy_router.handle(t, original, session_id)
+            if handled is not None:
+                return IntelligenceReply(handled, "(I carried out or discussed an autonomous task.)")
         if self._hub_router is not None:
             handled = self._hub_router.handle(t, original, session_id)
             if handled is not None:
                 return IntelligenceReply(handled)
+        if self._browser_router is not None:  # after the hub: an API answer is preferred to a browser click
+            handled = self._browser_router.handle(t, original, session_id)
+            if handled is not None:
+                return IntelligenceReply(handled, "(I controlled the user's browser.)")
 
         if _ADD.match(t):
             if svc.last_plan is None and not svc.last_offers:

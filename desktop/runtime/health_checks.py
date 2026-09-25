@@ -80,6 +80,43 @@ def microphone_check(manager: RuntimeManager, privacy: PrivacyController | None)
     return run
 
 
+def voice_pipeline_check(base: Callable[[], Health], voice_status, part: str) -> Callable[[], Health]:
+    """Refines a voice check with what the engine itself observed (microphone unplugged, recognizer crashed, speech output failing).
+    The engine's report only ever makes a healthy check worse; a check that is disabled/stopped stays as it is."""
+
+    def run() -> Health:
+        health = base()
+        if health.state is not ServiceState.HEALTHY:
+            return health
+        snap = voice_status.snapshot()
+        if part == "microphone" and snap["microphone"] in ("MICROPHONE_DISCONNECTED", "MICROPHONE_PERMISSION_DENIED"):
+            what = "permission denied" if snap["microphone"].endswith("DENIED") else "disconnected; retrying"
+            return Health(ServiceState.DEGRADED, f"microphone {what}")
+        if part == "stt" and snap["stt"]["ready"] is False:
+            return Health(ServiceState.DEGRADED, "speech recognition is failing; the dashboard still works")
+        if part == "tts" and snap["tts_state"] == "TTS_ERROR":
+            return Health(ServiceState.DEGRADED, "speech output is failing; answers are shown on the dashboard")
+        return health
+
+    return run
+
+
+def browser_check(engine) -> Callable[[], Health]:
+    """The browser opens on demand, so "closed" is normal (DISABLED with a reason), never a failure."""
+
+    def run() -> Health:
+        state = engine.state.value
+        if state == "closed":
+            return Health(ServiceState.DISABLED, "browser closed (opens when you ask)")
+        if state == "error":
+            return Health(ServiceState.FAILED, (engine.last_error or "browser error")[:120])
+        if state == "recovering":
+            return Health(ServiceState.DEGRADED, "browser recovering")
+        return Health(ServiceState.HEALTHY, f"browser {state}, {len(engine.session.tabs)} tab(s)")
+
+    return run
+
+
 def model_file_check(path: str, label: str, enabled: bool = True) -> Callable[[], Health]:
     def run() -> Health:
         if not enabled:
@@ -162,13 +199,16 @@ def thread_check(name: str, is_alive: Callable[[], bool | None]) -> Callable[[],
 
 def build_health_monitor(monitor: HealthMonitor, *, settings: Settings, manager: RuntimeManager, privacy: PrivacyController | None,
                          db_status: Callable[[], tuple[bool, str]], scheduler_alive: Callable[[], bool | None],
-                         gmail=None, calendar=None, messaging=None, memory_enabled: bool = False, hub=None) -> HealthMonitor:
+                         gmail=None, calendar=None, messaging=None, memory_enabled: bool = False, hub=None, voice_status=None) -> HealthMonitor:
     """Registers every service the user cares about. The checks stay honest: a service that is off says so."""
     monitor.register("voice_runtime", runtime_check(manager), critical=True)
-    monitor.register("stt", runtime_check(manager))  # the speech model is loaded when the voice runtime starts
-    monitor.register("microphone", microphone_check(manager, privacy))
+    stt, mic, tts = runtime_check(manager), microphone_check(manager, privacy), model_file_check(settings.TTS_MODEL_PATH, "text-to-speech")
+    if voice_status is not None:  # the engine's own observations refine the checks
+        stt, mic, tts = (voice_pipeline_check(c, voice_status, part) for c, part in ((stt, "stt"), (mic, "microphone"), (tts, "tts")))
+    monitor.register("stt", stt)  # the speech model is loaded when the voice runtime starts
+    monitor.register("microphone", mic)
     monitor.register("wake_word", model_file_check(settings.WAKE_WORD_MODEL_PATH, "wake word", settings.WAKE_WORD_ENABLED))
-    monitor.register("tts", model_file_check(settings.TTS_MODEL_PATH, "text-to-speech"))
+    monitor.register("tts", tts)
     monitor.register("database", _Cached(database_check(db_status), 15.0), critical=True)  # the schema check reads migration files: not on every call
     monitor.register("llm", _Cached(llm_check(settings.OLLAMA_BASE_URL, ollama_probe), 30.0) if settings.LLM_PROVIDER == "ollama"
                      else component_check("llm", False))

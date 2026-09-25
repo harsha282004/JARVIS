@@ -143,7 +143,7 @@ class ReminderScheduler:
         assert self._notifier is not None  # reminders are only delivered when a notifier was given
         try:
             self._notifier.notify(self._text(claimed, missed, now), {
-                "reminder_id": claimed.reminder_id, "task_id": claimed.task_id, "missed": missed,
+                "reminder_id": claimed.reminder_id, "task_id": claimed.task_id, "missed": missed, "priority": "high",
             })
         except Exception as exc:  # noqa: BLE001 - not delivered: do NOT record a trigger
             logger.warning("Reminder delivery failed (reminder=%s, %s)", claimed.reminder_id, type(exc).__name__)

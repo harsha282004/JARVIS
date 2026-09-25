@@ -26,7 +26,7 @@ from agent.intelligence.runner import IntelligenceRunner
 from agent.intelligence.service import IntelligenceService
 from agent.intelligence.snapshot import SnapshotCollector
 from agent.intelligence.timeline import ActivityTimeline
-from agent.tasks.notifications import clean_notification_text
+from agent.tasks.notifications import clean_notification_text, normalize_priority
 from agent.tasks.system import TaskSystem
 from agent.tasks.zone import resolve_timezone
 from backend.core import integration_switch
@@ -81,6 +81,10 @@ class RuntimeServices:
     intelligence_router: IntelligenceRouter | None = None
     intelligence_runner: IntelligenceRunner | None = None
     hub: IntegrationHub | None = None
+    voice: object | None = None  # voice.control.VoiceControl: settings, status, log, policy
+    autonomy: object | None = None  # autonomy.manager.AutonomyManager (Phase 21)
+    operator: object | None = None  # workflows.operator.PersonalOperator (Phase 22)
+    browser: object | None = None  # browser.control.BrowserControl (Phase 20): engine, tools, router; opens the browser only on demand
     sync_runner: SyncRunner | None = None
     tray_holder: dict = field(default_factory=dict)  # "tray" -> TrayController once it exists (notifications are delivered through it)
     periodic: list[PeriodicTask] = field(default_factory=list)
@@ -169,7 +173,7 @@ def build_runtime_services(settings: Settings, task_system: TaskSystem | None, p
                 raise RuntimeError("no tray")
             tray.notify(note.title or "JARVIS", text)
         elif channel == "voice":
-            if task_system is None or not task_system.announcements.put(text):
+            if task_system is None or not task_system.announcements.put(text, normalize_priority({1: "low", 2: "normal", 3: "high", 4: "critical"}.get(int(note.level), "normal"))):
                 raise RuntimeError("voice not accepting")
         else:
             raise ValueError("unknown channel")
@@ -180,7 +184,19 @@ def build_runtime_services(settings: Settings, task_system: TaskSystem | None, p
     supervisor = Supervisor(interval_seconds=max(5.0, settings.JARVIS_HEALTH_INTERVAL_SECONDS / 2))
     services = RuntimeServices(settings, state, bus, privacy, prefs, audit, center, monitor, supervisor, task_system, tray_holder=holder)
     services.power = PowerStateTracker(services.on_power_change)
+    try:
+        from voice.control import build_voice_control
 
+        services.voice = build_voice_control(settings, state, zone, task_system.announcements if task_system is not None else None)
+    except Exception as exc:  # noqa: BLE001 - voice settings are optional; the voice engine then runs with its defaults
+        logger.error("Voice control could not be built (%s); voice runs with defaults", type(exc).__name__)
+
+    try:
+        from browser.control import build_browser
+
+        services.browser = build_browser(settings, state, project_root)
+    except Exception as exc:  # noqa: BLE001 - the browser agent is optional; JARVIS keeps running without it
+        logger.error("Browser agent could not be built (%s); continuing without it", type(exc).__name__)
     if settings.JARVIS_INTELLIGENCE_ENABLED:
         try:
             _build_intelligence(services, settings, task_system, zone, b, bus, state)
@@ -242,7 +258,36 @@ def _build_intelligence(services: RuntimeServices, settings: Settings, task_syst
                 memory.store(MemoryCandidate(type=MemoryType.CONTEXT, content=text, source=MemorySource.EXPLICIT_USER_STATEMENT, basis=MemoryBasis.EXPLICIT, confidence=Confidence.HIGH))
 
         hub_router = HubRouter(hub, service, remember=remember)
-    services.intelligence_router = IntelligenceRouter(service, hub_router)
+    browser_router = None
+    if services.browser is not None:
+        from browser.voice import BrowserRouter
+
+        browser_router = BrowserRouter(services.browser.tools, service.confirmations, hub_router=hub_router)
+        services.browser.router = browser_router
+    autonomy_router = None
+    if settings.AUTONOMY_ENABLED:
+        from autonomy.build import build_autonomy
+
+        queue = task_system.announcements if task_system is not None else None
+        built = build_autonomy(settings, state, browser=services.browser, hub=services.hub, confirmations=service.confirmations,
+                               announce=(lambda text, priority: queue.put(text, priority)) if queue is not None else None)
+        if built is not None:
+            services.autonomy, autonomy_router = built
+    operator_router = None
+    if settings.WORKFLOWS_ENABLED:
+        from workflows.build import build_operator
+
+        queue = task_system.announcements if task_system is not None else None
+        try:
+            built_op = build_operator(settings, state, hub=hub, browser=services.browser, tasks=tasks, reminders=reminders, memory=memory, zone=zone, clock=utcnow,
+                                      confirmations=service.confirmations, center=services.center, bus=bus,
+                                      announce=(lambda text, priority: queue.put(text, priority)) if queue is not None else None)
+        except Exception as exc:  # noqa: BLE001 - the operator is optional; JARVIS keeps running without it
+            logger.error("Personal Operator could not be built (%s); continuing without it", type(exc).__name__)
+            built_op = None
+        if built_op is not None:
+            services.operator, operator_router = built_op
+    services.intelligence_router = IntelligenceRouter(service, hub_router, browser_router, autonomy_router, operator_router)
     services.intelligence_runner = IntelligenceRunner(
         service, notifier, center=services.center, bus=bus, privacy=services.privacy, interval_seconds=settings.JARVIS_INTELLIGENCE_INTERVAL_SECONDS,
     )
@@ -255,7 +300,59 @@ def build_health(services: RuntimeServices, manager) -> None:
         services.health, settings=services.settings, manager=manager, privacy=services.privacy, db_status=services.db_status,
         scheduler_alive=lambda: runner.is_alive() if runner is not None else None,
         gmail=services.gmail, calendar=services.calendar, messaging=None, memory_enabled=services.memory is not None, hub=services.hub,
+        voice_status=services.voice.status if services.voice is not None else None,
     )
+    if services.browser is not None:
+        from desktop.runtime.health_checks import browser_check
+
+        services.health.register("browser", browser_check(services.browser.engine))
+
+
+def _task_label(services: RuntimeServices):
+    if services.autonomy is None and services.operator is None:
+        return None
+
+    def label() -> str:
+        cur = services.autonomy.current() if services.autonomy is not None else None
+        if cur is not None:
+            return "Task: " + cur.goal[:40]
+        wf = services.operator.current() if services.operator is not None else None
+        return ("Workflow: " + wf.goal[:40]) if wf is not None else "No task running"
+
+    return label
+
+
+def _task_controls(services: RuntimeServices) -> dict:
+    """Tray Pause/Resume/Stop cover both the autonomous task (Phase 21) and the personal workflow (Phase 22): whichever is running is the one acted on."""
+    a, op = services.autonomy, services.operator
+    if a is None and op is None:
+        return {}
+
+    def running() -> bool:
+        return (a is not None and a.current() is not None) or (op is not None and any(w.status.value in ("RUNNING", "READY", "WAITING_FOR_CONFIRMATION") for w in op.active()))
+
+    def paused() -> bool:
+        return (a is not None and a.runner is not None and a.runner.pause_event.is_set()) or (op is not None and any(w.status.value == "PAUSED" for w in op.active()))
+
+    def pause() -> None:
+        if a is not None and a.current() is not None:
+            a.pause()
+        elif op is not None:
+            op.pause()
+
+    def resume() -> None:
+        if a is not None and a.runner is not None and a.runner.pause_event.is_set():
+            a.resume()
+        elif op is not None:
+            op.resume()
+
+    def stop() -> None:
+        if a is not None and a.current() is not None:
+            a.cancel()
+        if op is not None and op.active():
+            op.cancel()
+
+    return {"pause_task": pause, "resume_task": resume, "stop_task": stop, "task_running": running, "task_paused": paused}
 
 
 def build_tray_actions(services: RuntimeServices, manager) -> TrayActions:
@@ -298,7 +395,31 @@ def build_tray_actions(services: RuntimeServices, manager) -> TrayActions:
     def toggle_private() -> None:
         services.privacy.set_mode(PrivacyMode.ACTIVE if services.privacy.mode is PrivacyMode.PRIVATE else PrivacyMode.PRIVATE)
 
+    voice = services.voice
+
+    def open_dashboard() -> None:
+        import webbrowser
+
+        settings = services.settings
+        webbrowser.open(f"http://{settings.API_HOST}:{settings.API_PORT}/dashboard")
+
+    def voice_toggle(name: str):
+        return (lambda: voice.toggle(name)) if voice is not None else None
+
+    def voice_reader(name: str):
+        return (lambda: bool(getattr(voice.settings.current, name))) if voice is not None else None
+
     return TrayActions(
+        stop_speaking=manager.interrupt_speech,
+        toggle_mute=voice_toggle("voice_muted"), is_muted=voice_reader("voice_muted"),
+        toggle_voice_notifications=voice_toggle("voice_notifications"), voice_notifications_on=voice_reader("voice_notifications"),
+        toggle_dnd=voice_toggle("dnd_enabled"), dnd_on=(lambda: voice.policy.dnd_active()) if voice is not None else None,
+        open_dashboard=open_dashboard if services.settings.JARVIS_API_ENABLED else None,
+        open_browser=(lambda: services.browser.open_browser()) if services.browser is not None else None,
+        close_browser=(lambda: services.browser.close_browser()) if services.browser is not None else None,
+        stop_browser_action=(lambda: services.browser.stop_action()) if services.browser is not None else None,
+        browser_open=(lambda: services.browser.engine.state.value not in ("closed",)) if services.browser is not None else None,
+        task_label=_task_label(services), **_task_controls(services),
         show_briefing=briefing if svc is not None else None,
         show_tasks=tasks if ts is not None and ts.tasks is not None else None,
         show_reminders=reminders if ts is not None and ts.reminders is not None else None,

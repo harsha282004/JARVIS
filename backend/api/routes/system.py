@@ -219,3 +219,205 @@ def set_integration_permission(name: str, request: PermissionRequest, ctx: AppCo
         raise HTTPException(status_code=422, detail="that integration has no such permission")
     (hub.registry.grant if request.granted else hub.registry.revoke_permission)(name, permission)
     return hub.registry.info(name).to_dict()
+
+
+# ---- voice (Phase 19) ---------------------------------------------------------------------------------------------------------
+# State names, short text the user said/heard, timings and error kinds. Never audio, never secrets.
+
+
+def _voice(ctx: AppContext):
+    voice = getattr(ctx, "voice", None)
+    if voice is None:
+        raise HTTPException(status_code=503, detail="voice control is not running")
+    return voice
+
+
+@router.get("/voice", dependencies=[Depends(check_host)])
+def voice_status(ctx: AppContext = Depends(authorized)) -> dict:
+    voice = _voice(ctx)
+    snap = voice.snapshot()
+    rs = ctx.manager.status() if ctx.manager is not None else None
+    snap["runtime"] = rs.state.value if rs else None
+    if rs is not None and snap["microphone"] in ("MICROPHONE_CONNECTED", "MICROPHONE_UNKNOWN") and (
+            rs.state.value in ("paused", "stopped") or (rs.state.value == "running" and not rs.microphone_active and snap["microphone"] == "MICROPHONE_CONNECTED")):
+        snap["microphone"] = "MICROPHONE_CLOSED"  # the engine is not running (paused / private / stopped): the microphone is released
+    return snap
+
+
+@router.post("/voice/settings", dependencies=[Depends(check_host)])
+def voice_settings(changes: dict, ctx: AppContext = Depends(authorized)) -> dict:
+    """Change persisted voice settings (wake sensitivity, TTS speed/volume, DND, ...). Invalid values change nothing (400)."""
+    try:
+        _voice(ctx).update(changes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return voice_status(ctx)
+
+
+@router.post("/voice/interrupt", dependencies=[Depends(check_host)])
+def voice_interrupt(ctx: AppContext = Depends(authorized)) -> dict:
+    _voice(ctx).interrupt()
+    return {"interrupted": True}
+
+
+@router.post("/voice/activate", dependencies=[Depends(check_host)])
+def voice_activate(ctx: AppContext = Depends(authorized)) -> dict:
+    """"Talk to JARVIS" without saying the wake word. Only while the runtime is running (it never opens a paused or private microphone)."""
+    return {"activated": bool(ctx.manager is not None and ctx.manager.request_activation())}
+
+
+@router.get("/voice/log", dependencies=[Depends(check_host)])
+def voice_log(limit: int = 50, ctx: AppContext = Depends(authorized)) -> dict:
+    return {"events": _voice(ctx).log.recent(max(1, min(limit, 200)))}
+
+
+# ---- browser (Phase 20) ---------------------------------------------------------------------------------------------------------
+# State only: tabs as scheme://host/path (no query strings), titles, the last action and whether it was verified. Never page content,
+# cookies, credentials or screenshots.
+
+
+def _browser(ctx: AppContext):
+    browser = getattr(ctx, "browser", None)
+    if browser is None:
+        raise HTTPException(status_code=503, detail="the browser agent is not enabled")
+    return browser
+
+
+@router.get("/browser", dependencies=[Depends(check_host)])
+def browser_status(ctx: AppContext = Depends(authorized)) -> dict:
+    return _browser(ctx).snapshot()
+
+
+@router.post("/browser/open", dependencies=[Depends(check_host)])
+def browser_open(ctx: AppContext = Depends(authorized)) -> dict:
+    return _browser(ctx).open_browser().to_dict()
+
+
+@router.post("/browser/close", dependencies=[Depends(check_host)])
+def browser_close(ctx: AppContext = Depends(authorized)) -> dict:
+    return _browser(ctx).close_browser().to_dict()
+
+
+@router.post("/browser/stop", dependencies=[Depends(check_host)])
+def browser_stop(ctx: AppContext = Depends(authorized)) -> dict:
+    _browser(ctx).stop_action()
+    return {"stopping": True}
+
+
+@router.get("/browser/log", dependencies=[Depends(check_host)])
+def browser_log(limit: int = 50, ctx: AppContext = Depends(authorized)) -> dict:
+    return {"events": _browser(ctx).log.recent(max(1, min(limit, 200)))}
+
+
+# ---- autonomous tasks (Phase 21) -----------------------------------------------------------------------------------------------------
+# Task summaries only: goal, status, progress, the current action's description, risk, question, result text. Never the blackboard, page text or chain of thought.
+
+
+def _autonomy(ctx: AppContext):
+    manager = getattr(ctx, "autonomy", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="the autonomous agent is not enabled")
+    return manager
+
+
+@router.get("/tasks", dependencies=[Depends(check_host)])
+def tasks(ctx: AppContext = Depends(authorized)) -> dict:
+    return _autonomy(ctx).snapshot()
+
+
+@router.post("/tasks/cancel", dependencies=[Depends(check_host)])
+def tasks_cancel(ctx: AppContext = Depends(authorized)) -> dict:
+    return {"message": _autonomy(ctx).cancel()}
+
+
+@router.post("/tasks/pause", dependencies=[Depends(check_host)])
+def tasks_pause(ctx: AppContext = Depends(authorized)) -> dict:
+    return {"message": _autonomy(ctx).pause()}
+
+
+@router.post("/tasks/resume", dependencies=[Depends(check_host)])
+def tasks_resume(ctx: AppContext = Depends(authorized)) -> dict:
+    return {"message": _autonomy(ctx).resume()}
+
+
+# ---- personal operator workflows (Phase 22) ------------------------------------------------------------------------------------------------
+# Workflow summaries only: goal, status, progress n/m, sources, the current step's description, risk, question, result text, redacted audit lines. Never step outputs, email/page
+# text, tokens or chain of thought. Every route needs the per-run token and a loopback Host; POST /workflows goes through the same planner, validator and permission checks as speech.
+
+
+class WorkflowRequest(BaseModel):
+    goal: str
+
+    def clean(self) -> str:
+        return self.goal.strip()[:300]
+
+
+class WorkflowConfirm(BaseModel):
+    approve: bool
+
+
+def _operator(ctx: AppContext):
+    op = getattr(ctx, "operator", None)
+    if op is None:
+        raise HTTPException(status_code=503, detail="the personal operator is not enabled")
+    return op
+
+
+def _workflow(ctx: AppContext, workflow_id: str):
+    wf = _operator(ctx).get(workflow_id)
+    if wf is None:
+        raise HTTPException(status_code=404, detail="no such workflow")
+    return wf
+
+
+@router.post("/workflows", dependencies=[Depends(check_host)])
+def workflows_start(body: WorkflowRequest, ctx: AppContext = Depends(authorized)) -> dict:
+    goal = body.clean()
+    if not goal:
+        raise HTTPException(status_code=422, detail="say what the workflow should do")
+    reply = _operator(ctx).start(goal, "api")
+    if reply is None:
+        return {"started": False, "message": "That isn't a workflow I can run.", "workflow": None}
+    return {"started": reply.workflow is not None, "message": reply.text, "workflow": reply.workflow.summary() if reply.workflow is not None else None}
+
+
+@router.get("/workflows", dependencies=[Depends(check_host)])
+def workflows(ctx: AppContext = Depends(authorized)) -> dict:
+    return _operator(ctx).snapshot()
+
+
+@router.get("/workflows/{workflow_id}", dependencies=[Depends(check_host)])
+def workflow_detail(workflow_id: str, ctx: AppContext = Depends(authorized)) -> dict:
+    return _workflow(ctx, workflow_id).summary()
+
+
+@router.get("/workflows/{workflow_id}/status", dependencies=[Depends(check_host)])
+def workflow_status(workflow_id: str, ctx: AppContext = Depends(authorized)) -> dict:
+    s = _workflow(ctx, workflow_id).summary()
+    return {"workflow_id": s["workflow_id"], "status": s["status"], "progress": s["progress"], "current_step": s["current_step"], "question": s["question"]}
+
+
+@router.post("/workflows/{workflow_id}/cancel", dependencies=[Depends(check_host)])
+def workflow_cancel(workflow_id: str, ctx: AppContext = Depends(authorized)) -> dict:
+    _workflow(ctx, workflow_id)
+    return {"message": _operator(ctx).cancel(workflow_id)}
+
+
+@router.post("/workflows/{workflow_id}/pause", dependencies=[Depends(check_host)])
+def workflow_pause(workflow_id: str, ctx: AppContext = Depends(authorized)) -> dict:
+    wf = _workflow(ctx, workflow_id)
+    op = _operator(ctx)
+    runner = op._runners.get(wf.workflow_id)  # noqa: SLF001
+    return {"message": "Paused. Say resume to carry on." if runner is not None and runner.pause() else "That workflow can't be paused right now."}
+
+
+@router.post("/workflows/{workflow_id}/resume", dependencies=[Depends(check_host)])
+def workflow_resume(workflow_id: str, ctx: AppContext = Depends(authorized)) -> dict:
+    _workflow(ctx, workflow_id)
+    return {"message": _operator(ctx).resume(workflow_id)}
+
+
+@router.post("/workflows/{workflow_id}/confirm", dependencies=[Depends(check_host)])
+def workflow_confirm(workflow_id: str, body: WorkflowConfirm, ctx: AppContext = Depends(authorized)) -> dict:
+    _workflow(ctx, workflow_id)
+    return {"message": _operator(ctx).confirm(workflow_id, body.approve).text}

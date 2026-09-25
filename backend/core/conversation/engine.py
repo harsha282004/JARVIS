@@ -8,6 +8,7 @@ straight to the `LLMProvider`. This class remains the only owner of history. Sta
 the engine is not thread-safe (it is used from the single voice worker).
 """
 
+import re
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 
@@ -205,6 +206,9 @@ class ConversationEngine:
         confirmed = self._answer_confirmation(session, user_message)
         if confirmed is not None:
             return confirmed
+        answered = self._answer_clarification(session, user_message)
+        if answered is not None:
+            return answered
         handled = self._answer_from_intelligence(session, user_message)
         if handled is not None:
             return handled
@@ -242,6 +246,71 @@ class ConversationEngine:
         self._history_override = reply.history_text
         self.last_permission_requests = []
         return reply.text
+
+    @property
+    def last_action_name(self) -> str | None:
+        """The tool the last turn asked for (for the voice log), or None when the turn was a plain answer."""
+        decision = self.last_decision
+        if decision is None:
+            return None
+        action = (decision.task_action or decision.gmail_action or decision.event_action or decision.calendar_action
+                  or decision.message_action or decision.proactive_action or decision.briefing_action)
+        return str(action.name.value) if action is not None else None
+
+    def awaiting_answer(self) -> str | None:
+        """"confirmation" / "clarification" while JARVIS has asked the user something and is waiting; else None.
+        Read-only: the voice layer uses it to refuse a low-confidence transcript as the answer to a confirmation."""
+        session = self.session
+        if session is None:
+            return None
+        found = self._actions.awaiting(session.session_id) if self._actions is not None else None
+        if found is None and self._intel_service is not None:
+            try:
+                if self._intel_service.confirmations.has_pending(session.session_id):
+                    return "confirmation"
+            except Exception:  # noqa: BLE001
+                return None
+        return found
+
+    def task_active(self) -> bool:
+        return bool(self._intelligence is not None and getattr(self._intelligence, "task_active", lambda: False)())
+
+    def cancel_task(self) -> bool:
+        """Stop the autonomous task in progress (voice "Stop"/"Cancel"). Future actions do not run; nothing is executed by this call."""
+        return bool(self._intelligence is not None and getattr(self._intelligence, "cancel_task", lambda: False)())
+
+    def cancel_pending(self) -> bool:
+        """"Cancel" / "never mind": drop whatever JARVIS was waiting to be confirmed or clarified. Nothing is executed."""
+        session = self.session
+        if session is None:
+            return False
+        dropped = self._actions.cancel_pending(session.session_id) if self._actions is not None else False
+        if self._intel_service is not None:
+            try:
+                dropped = self._intel_service.confirmations.cancel(session.session_id) or dropped
+            except Exception:  # noqa: BLE001
+                pass
+        return dropped
+
+    _CORRECTION = re.compile(r"^(?:no[, ]+)?(?:change|make|move|set|update)\s+(?:that|it|the\s+reminder)\s+(?:to|for)?\s*(.+?)[.!?]?$", re.I)
+
+    def _answer_clarification(self, session: ConversationSession, user_message: Message) -> str | None:
+        """A short answer to JARVIS's own question ("What time tomorrow?" -> "Morning.") or a correction of the reminder it just
+        made ("Make that 6 PM."). Both are completed deterministically through the executor (resolve -> PermissionManager -> tool)."""
+        if self._actions is None:
+            return None
+        outcome = self._actions.answer_clarification(user_message.content, session.session_id)
+        if outcome is None:
+            match = self._CORRECTION.match(user_message.content.strip())
+            if match:
+                outcome = self._actions.correct_reminder(match.group(1), session.session_id)
+        if outcome is None:
+            return None
+        self.last_decision = None
+        self._action_handled = True
+        self._history_override = outcome.history_text
+        self.last_permission_requests = [outcome.permission_request] if outcome.permission_request else []
+        return outcome.reply
 
     def _answer_confirmation(self, session: ConversationSession, user_message: Message) -> str | None:
         """If the user is answering a pending "do you want me to cancel ...?" question, handle it here,

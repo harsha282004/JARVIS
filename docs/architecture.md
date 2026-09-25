@@ -37,6 +37,14 @@ implement agent reasoning (LangGraph/planner/tools), memory, multi-turn
 conversation, or any integration. See `docs/voice-system.md` for full
 detail and `docs/requirements.md` for the Phase 1 non-goals.
 
+## Phase 20 scope (controlled browser agent)
+
+`browser/` (engine, tools, YouTube workflow, router, driver) sits behind `IntelligenceRouter` after the Integration Hub router: voice/text -> conversation -> BrowserRouter -> BrowserTools (schema, category, PermissionManager, ConfirmationEngine) -> BrowserEngine -> Playwright. See `BROWSER_ARCHITECTURE.md`, `BROWSER_SECURITY.md`, `BROWSER_TOOLS.md`. The `voice/` package has no dependency on it.
+
+## Phase 21 scope (autonomous multi-step tasks)
+
+`autonomy/` (planner, tool router, observer/verifier, task runner, manager) sits ahead of the Hub and Browser routers in `IntelligenceRouter`. It plans a goal into steps, runs them through `ToolRouter` -> (`BrowserTools` | Integration Hub tools | local analysis), observes and verifies after each, and reuses the Phase 17 `ConfirmationEngine` for task-level confirmations. It adds no capability: no shell, file, credential or script tool. See `AUTONOMOUS_AGENT_ARCHITECTURE.md`, `AUTONOMOUS_AGENT_SECURITY.md`, `AUTONOMOUS_TASKS.md`.
+
 ## Phase 11 scope (event & deadline intelligence)
 
 Phase 11 adds `agent/events/`: a typed `Event` model (events and deadlines, with provenance and extraction confidence),
@@ -372,3 +380,7 @@ Memory of any
 kind (conversation history is in-memory only, added in Phase 3), LangGraph/planner/tool execution, and every integration/desktop/
 frontend item listed above. See `docs/voice-system.md` for the full Phase 1
 non-goal list.
+
+## Phase 22 scope (Personal Operator: autonomous workflows)
+
+`workflows/` coordinates the user's own systems into end-to-end workflows (email → deadline → task → reminder, briefings, meeting preparation, GitHub activity → tasks, document deadlines, "apply from the email"). Operator → workflow runner → operator/browser tool router → Integration Hub gate or `PermissionManager` → tool → read-back verification. Deterministic (no model call); typed data flow with provenance; facts are classified and only VERIFIED/HIGH_CONFIDENCE ones may drive a write; a write-ahead effect ledger makes every side effect idempotent and crash-recoverable; consequential steps need the user's confirmation through the shared `ConfirmationEngine`; conflicts between sources are surfaced, not resolved; nothing is ever sent, replied to, forwarded, deleted, published or purchased. See `PERSONAL_OPERATOR_ARCHITECTURE.md`, `WORKFLOW_ENGINE.md`, `WORKFLOW_SECURITY.md`, `WORKFLOW_TEMPLATES.md`.

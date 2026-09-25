@@ -131,6 +131,13 @@ class GitHubAdapter(IntegrationAdapter):
         hits = [r for r in repos if not words or all(w in f"{r.full_name} {r.description} {r.language}".lower() for w in words)]
         return [self._repo_item(r, now) for r in hits[:limit]]
 
+    def identity(self) -> str:
+        """The GitHub login the connected token belongs to (proves 'my repositories' really are the user's)."""
+        return self._client.viewer()
+
+    def readme(self, full_name: str) -> str:
+        return self._client.readme(full_name)
+
     def fetch(self, source_id: str) -> NormalizedItem:
         return self._repo_item(self._client.repo(source_id), self._clock())
 

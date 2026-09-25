@@ -78,15 +78,62 @@ class AudioInput:
             yield self.read_frame()
 
 
-class AudioOutput:
-    """Blocking speaker playback."""
+def list_input_devices() -> list[dict]:
+    """Input devices as {index, name, default}. Names only; nothing is opened and no audio is read."""
+    try:
+        devices = sd.query_devices()
+        default = sd.default.device[0]
+    except Exception as exc:  # noqa: BLE001 - PortAudio raises various backend errors
+        raise AudioDeviceError(f"Could not list audio devices: {exc}") from exc
+    return [
+        {"index": i, "name": d["name"], "default": i == default}
+        for i, d in enumerate(devices)
+        if d.get("max_input_channels", 0) > 0
+    ]
 
-    def __init__(self, device: str = ""):
+
+class AudioOutput:
+    """Speaker playback that can be stopped at any moment (barge-in).
+
+    `play()` blocks until finished (or `stop()`); `start()` returns immediately so the caller can keep listening while
+    JARVIS talks. `volume` (0..1) is applied to the samples, so it works for any TTS engine.
+    """
+
+    def __init__(self, device: str = "", volume: float = 1.0):
         self._device = _resolve_device(device)
+        self.volume = volume
+
+    def _scaled(self, samples: np.ndarray) -> np.ndarray:
+        if self.volume >= 0.999:
+            return samples
+        if samples.dtype == np.int16:
+            return (samples.astype(np.float32) * self.volume).astype(np.int16)
+        return samples.astype(np.float32) * self.volume
+
+    def start(self, samples: np.ndarray, sample_rate: int) -> None:
+        try:
+            sd.play(self._scaled(samples), samplerate=sample_rate, device=self._device)
+        except Exception as exc:  # noqa: BLE001 - PortAudio raises various backend errors
+            raise AudioDeviceError(f"Could not play audio through speakers: {exc}") from exc
+
+    @property
+    def is_playing(self) -> bool:
+        try:
+            stream = sd.get_stream()
+            return bool(stream.active)
+        except Exception:  # noqa: BLE001 - no stream yet / already closed
+            return False
+
+    def stop(self) -> None:
+        """Silence the speakers immediately. Safe to call when nothing is playing."""
+        try:
+            sd.stop()
+        except Exception:  # noqa: BLE001 - stopping must never raise
+            pass
 
     def play(self, samples: np.ndarray, sample_rate: int) -> None:
+        self.start(samples, sample_rate)
         try:
-            sd.play(samples, samplerate=sample_rate, device=self._device)
             sd.wait()
-        except Exception as exc:  # noqa: BLE001 - PortAudio raises various backend errors
+        except Exception as exc:  # noqa: BLE001
             raise AudioDeviceError(f"Could not play audio through speakers: {exc}") from exc

@@ -1,5 +1,7 @@
 # Voice System (Phase 1)
 
+> **Updated in Phase 19.** This page is the Phase 1 setup guide (models, hardware, first run). Where it describes a fixed listening window, no interruption, or a single blocking playback, that is history: see [`VOICE_ARCHITECTURE.md`](VOICE_ARCHITECTURE.md) for the current pipeline (VAD end-of-speech, barge-in, control words, cancellable sentence-by-sentence TTS, Do Not Disturb) and [`CONFIGURATION.md`](CONFIGURATION.md) for the settings.
+
 ## Overview
 
 Phase 1 implements a functional, fully local voice pipeline:
@@ -9,7 +11,7 @@ Microphone
     v
 Wake-word detection ("Hey JARVIS")   -- openWakeWord
     v
-Voice capture (fixed window)
+Voice capture (VAD since Phase 19; fixed window with VOICE_USE_VAD=false)
     v
 Speech-to-text                        -- Faster-Whisper
     v
@@ -291,11 +293,11 @@ This implementation was built and tested on the target machine, with real
 
 ## Known limitations
 
-- Fixed-duration listening window (`AUDIO_LISTEN_SECONDS`) instead of
+- (Resolved in Phase 19: VAD ends the utterance; the fixed window is only used with `VOICE_USE_VAD=false`.) Fixed-duration listening window (`AUDIO_LISTEN_SECONDS`) instead of
   proper end-of-speech / voice-activity detection — you have exactly that
   many seconds to speak after "Yes?". Not addressed in Phase 3.
 - Multi-turn context is in memory only (Phase 3); see `docs/conversation-engine.md`.
-- No interruption handling (can't stop JARVIS mid-sentence).
+- ~~No interruption handling~~ Since Phase 19 JARVIS can be stopped mid-sentence (wake word, optional VAD mode, tray/dashboard); see VOICE_ARCHITECTURE.md §5 for what is and is not covered.
 - Wake-word/STT/TTS model quality depends entirely on the chosen model
   size vs. available CPU/GPU.
 - The LLM's refusal to claim access to email/calendar/memory is prompt-based,
