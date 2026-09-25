@@ -19,6 +19,13 @@ class FakeManager:
         self.state = state
         self.calls = []
 
+    def status(self):
+        from datetime import datetime, timezone
+
+        from desktop.runtime.state import RuntimeStatus
+
+        return RuntimeStatus(self.state, None, datetime.now(timezone.utc), None, False)
+
     def start(self):
         self.calls.append("start")
         self.state = RuntimeState.RUNNING
@@ -135,10 +142,24 @@ def test_tray_actions_delegate_to_manager():
 def test_tray_menu_enablement_follows_state():
     manager = FakeManager(RuntimeState.RUNNING)
     menu = TrayController(manager, lambda: None)._build_menu()
-    items = {item.text: item for item in menu.items if item and isinstance(item.text, str)}
 
-    assert items["Pause"].enabled is True
-    assert items["Start / Resume"].enabled is False
+    def item(name):  # texts can be dynamic (pystray evaluates them on access)
+        return next(i for i in menu.items if i and i.text == name)
+
+    assert item("Pause JARVIS").enabled is True and item("Restart JARVIS").enabled is True
     manager.state = RuntimeState.PAUSED
-    assert items["Pause"].enabled is False
-    assert items["Start / Resume"].enabled is True
+    assert item("Resume JARVIS").enabled is True
+    manager.state = RuntimeState.STARTING
+    assert item("Pause JARVIS").enabled is False and item("Restart JARVIS").enabled is False
+    assert item("Talk to JARVIS").enabled is False  # nothing wired and not running: greyed out, never faked
+    assert item("Tasks").enabled is False and item("Today's Briefing").enabled is False
+
+
+def test_tray_status_line_reflects_real_state():
+    manager = FakeManager(RuntimeState.ERROR)
+    tray = TrayController(manager, lambda: None)
+    assert tray.view().label == "🔴 Offline"
+    manager.state = RuntimeState.PAUSED
+    assert tray.view().label == "⏸ Paused"
+    manager.state = RuntimeState.RUNNING
+    assert tray.view().label == "🟢 Online"

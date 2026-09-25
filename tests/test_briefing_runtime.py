@@ -115,6 +115,6 @@ def test_env_example_documents_the_briefing_settings_without_secrets():
 
 def test_no_migration_table_scheduler_or_notifier_was_added():
     versions = sorted(p.name for p in (ROOT / "database" / "migrations" / "versions").glob("*.py"))
-    assert versions[-1] == "0006_create_proactive_notifications.py" and not any("brief" in v for v in versions)  # the latest migration is still Phase 14's
+    assert "0006_create_proactive_notifications.py" in versions and versions[-1] == "0007_create_hub_items.py" and not any("brief" in v for v in versions)  # Phase 15 added none; the latest is now Phase 18 (hub_items)
     text = (ROOT / "voice" / "bootstrap.py").read_text(encoding="utf-8")
     assert "BriefingScheduler" not in text and "briefing_scheduler" not in text.lower()

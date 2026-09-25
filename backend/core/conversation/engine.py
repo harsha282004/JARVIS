@@ -26,6 +26,7 @@ from backend.core.conversation.prompts import SYSTEM_PROMPT
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.messages import Message, Role
 from backend.core.logging import get_logger
+from backend.core.events import EventBus, SystemEvent
 from backend.core.security import PermissionManager, PermissionRequest
 
 logger = get_logger(__name__)
@@ -51,6 +52,8 @@ class ConversationEngine:
         rag: RagService | None = None,
         graph: GraphContextProvider | None = None,
         actions: TaskActionExecutor | None = None,
+        intelligence=None,
+        bus: EventBus | None = None,
     ):
         if max_messages < MIN_MAX_MESSAGES:
             raise ValueError(f"max_messages must be at least {MIN_MAX_MESSAGES}")
@@ -65,6 +68,9 @@ class ConversationEngine:
         self._rag = rag
         self._graph = graph
         self._actions = actions
+        self._intelligence = intelligence  # Phase 17: deterministic cross-source answers (agent.intelligence.router.IntelligenceRouter)
+        self._intel_service = getattr(intelligence, "service", None)
+        self._bus = bus
         self._session: ConversationSession | None = None
         self.last_decision: AgentDecision | None = None
         self.last_permission_requests: list[PermissionRequest] = []
@@ -114,6 +120,7 @@ class ConversationEngine:
         session.messages[:] = self._window(session.messages)
         self._request_permissions(session.session_id)
         self._remember(text)
+        self._observe(text, reply)
         logger.info(
             "Conversation turn completed (session=%s, messages=%d)",
             session.session_id,
@@ -162,10 +169,22 @@ class ConversationEngine:
         if self._memory is None:
             return ""
         try:
-            return build_memory_block(self._memory.retrieve(text))
+            memories = self._memory.retrieve(text)
+            if self._intel_service is not None:
+                memories = self._intel_service.rerank_memories(text, memories)  # drop memories with no link to this request
+            return build_memory_block(memories)
         except Exception as exc:  # noqa: BLE001 - memory is optional; log the type only (messages may echo content)
             logger.warning("Memory retrieval failed; continuing without memory (%s)", type(exc).__name__)
             return ""
+
+    def _observe(self, user_text: str, reply: str) -> None:
+        """Let the intelligence layer note which of the user's things this turn was about (so "when is it due?" can resolve "it"), and tell
+        the rest of JARVIS what happened. Both are best effort."""
+        if self._intel_service is not None:
+            self._intel_service.observe_turn(user_text, reply)
+        if self._bus is not None:
+            executed = bool(self._action_handled and self.last_decision is not None)
+            self._bus.publish(SystemEvent.AGENT_RESPONSE, executed=executed)
 
     def _remember(self, text: str) -> None:
         """After a completed turn, extract memories from the USER's words only.
@@ -186,6 +205,9 @@ class ConversationEngine:
         confirmed = self._answer_confirmation(session, user_message)
         if confirmed is not None:
             return confirmed
+        handled = self._answer_from_intelligence(session, user_message)
+        if handled is not None:
+            return handled
         context = self._build_context(session, user_message, "\n\n".join(b for b in (memory_block, graph_block) if b))
         if self._agent is None:
             return self._llm.chat(context)
@@ -201,6 +223,25 @@ class ConversationEngine:
                 decision, user_message, context[1:-1], "\n\n".join(b for b in (memory_block, graph_block) if b)
             )
         return decision.response
+
+    def _answer_from_intelligence(self, session: ConversationSession, user_message: Message) -> str | None:
+        """Phase 17: questions the personal intelligence layer answers deterministically (plans, focus, conflicts, "why?", references,
+        the answer to its own pending confirmation). No LLM call is made, so this also works when the LLM or the internet is down.
+        Its replies contain the user's own tasks/calendar/email titles, so like other such replies they stay out of the history."""
+        if self._intelligence is None:
+            return None
+        try:
+            reply = self._intelligence.handle(user_message.content, session.session_id)
+        except Exception as exc:  # noqa: BLE001 - the layer is optional; a failure must not break the conversation
+            logger.error("Intelligence layer failed (%s)", type(exc).__name__)
+            return None
+        if reply is None:
+            return None
+        self.last_decision = None
+        self._action_handled = True
+        self._history_override = reply.history_text
+        self.last_permission_requests = []
+        return reply.text
 
     def _answer_confirmation(self, session: ConversationSession, user_message: Message) -> str | None:
         """If the user is answering a pending "do you want me to cancel ...?" question, handle it here,
@@ -276,5 +317,7 @@ class ConversationEngine:
         session, self._session = self._session, None
         if self._permissions is not None:
             self._permissions.end_session(session.session_id)
+        if self._intel_service is not None:
+            self._intel_service.end_session(session.session_id)  # a pending confirmation never outlives its conversation
         logger.info("Conversation session ended (session=%s, reason=%s)", session.session_id, reason)
         session.end()

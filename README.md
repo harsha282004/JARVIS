@@ -3,7 +3,43 @@
 A persistent, voice-controlled, AI-powered personal digital assistant for
 Windows.
 
-## Current status: Phase 15 — Daily Briefing & Productivity Intelligence
+## Current status: Phase 18 — Integration Hub & unified personal data layer
+
+Gmail, Google Calendar, GitHub (new), Telegram, and watched document folders now sit behind one **Integration Hub**: a registry that knows each integration's real
+state (connected? enabled? last sync? last error? which permissions?), a permission model (reads on by default; creating events, reading attachments and indexing files are
+opt-in), an incremental, idempotent **sync engine** (cursors, backoff, rate-limit handling, no auto-retry after an auth failure), one normalized data shape with provenance, a tool
+router with uniform results, a global on/off switch, encrypted token storage (Windows DPAPI), and an **Integration Center** on the local dashboard. Everything feeds the Personal
+Context Engine; writes still need your confirmation and are read back before JARVIS says "Done". See `docs/PHASE_18_IMPLEMENTATION.md` (results, measurements, limitations)
+and `docs/INTEGRATION_ARCHITECTURE.md`.
+
+| | Items |
+|---|---|
+| **IMPLEMENTED** (tested with synthetic data and mocks) | registry, permissions, health/status, error classification, normalization, `hub_items` store + migration `0007`, sync engine/runner, tool router, Gmail adapter (topics, importance, deadlines, events, registrations, incremental sync), Calendar adapter (external ids, diff sync, conflicts, verified writes), GitHub client/adapter/project association, Telegram adapter, document watcher, integration switch, DPAPI secrets, dashboard cards + API, spoken hub requests |
+| **REQUIRES MANUAL CONFIGURATION** | Google OAuth consent (Gmail, Calendar), GitHub token (`python scripts/github_cli.py token`), Telegram bot, PostgreSQL + `alembic upgrade head`, `JARVIS_DOCUMENT_DIRS`, opt-in permissions |
+| **PARTIALLY IMPLEMENTED** | update/delete calendar events by voice (Phase 12 tools; not hub-gated), attachment download (adapter method only), dashboard (tested via API, not a browser), Google token encryption (only for tokens saved after Phase 18), real-service behavior (mocks only; PostgreSQL not run) |
+| **UNSUPPORTED** | WhatsApp personal accounts (no official API; scraping rejected), personal Telegram chats, Signal, iMessage; Gmail/Calendar/GitHub push (need a public endpoint) |
+
+Docs: `PHASE_18_AUDIT.md`, `PHASE_18_IMPLEMENTATION.md`, `INTEGRATION_ARCHITECTURE.md`, `OAUTH_SECURITY.md`, `GMAIL_INTEGRATION.md`, `CALENDAR_INTEGRATION.md`, `GITHUB_INTEGRATION.md`,
+`MESSAGING_INTEGRATION.md`, `DOCUMENT_INTEGRATION.md`, `SYNC_ENGINE.md`, `DATA_NORMALIZATION.md`, `INTEGRATION_TROUBLESHOOTING.md` (all under `docs/`).
+
+### Previous status: Phases 16 + 17 — production hardening and personal intelligence
+
+JARVIS now runs as a supervised Windows background assistant (tray, health monitor, automatic recovery, privacy modes, structured logs, graceful stop)
+and can reason across your authorized sources (tasks, reminders, calendar, email, memory, documents): connect an email to a calendar event and a task, notice
+conflicts and missing entries, plan a day, add the plan to your calendar **only after you confirm it** (and verify the result), and explain *why* and *from where*.
+The intelligence layer is deterministic: it makes no LLM call and keeps working when Ollama or the internet is down. Start with `docs/COMBINED_PHASE_16_17_IMPLEMENTATION.md`
+(what was done, executed test results, measurements, limitations) and `docs/DEPLOYMENT.md` (run without VS Code).
+
+| | Items |
+|---|---|
+| **IMPLEMENTED** (tested; real-process check passed) | health monitor + truthful tray/voice indicator; privacy modes (persisted); crash recovery with backoff; `--stop`; power/lock state; JSON/redacted logs; event bus; notification center (dedupe, quiet hours, ack, history); durable audit; database retry/schema check; local dashboard API; DOCX; secret scan; context graph, entity resolution, conflicts, deadline kinds, task dependencies, findings, focus/plan/prepare/project/timeline answers, explanations and sources, references, memory relevance, preferences, briefings 2.0 + evening review, confirmed plan execution with read-back |
+| **PARTIALLY IMPLEMENTED** | Windows start-with-Windows / Scheduled Task / update / uninstall scripts (syntax-checked, not run); dashboard (static page, tested via API not a browser); person/organization extraction (minimal); context graph (in memory, not persisted to PostgreSQL); PostgreSQL paths (601 tests skipped here: no PostgreSQL); Gmail/Calendar tested with fakes |
+| **PLANNED** | GitHub context; packaged installer; persisting the context graph in PostgreSQL; React front end; WhatsApp is not supported (no official personal-account API) |
+
+Docs: `docs/COMBINED_PHASE_16_17_AUDIT.md`, `docs/PERSONAL_CONTEXT_ENGINE.md`, `docs/INTELLIGENCE_ENGINE.md`, `docs/PLANNING_ENGINE.md`, `docs/KNOWLEDGE_GRAPH.md`,
+`docs/PROACTIVE_INTELLIGENCE.md`, `docs/DATA_PROVENANCE.md`, `docs/PROMPT_INJECTION_SECURITY.md`, `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`, `docs/TESTING.md`.
+
+### Previous status: Phase 15 — Daily Briefing & Productivity Intelligence
 
 Phases 0-14 are complete. Phase 15 combines your existing tasks, reminders, deadlines,
 Google Calendar, important email and (if set up) messages into a grounded, voice-friendly view: "Good morning", "What do I have today?", "What should I focus on?",
@@ -110,7 +146,7 @@ phase does and does not cover.
 | LLM        | Ollama (local), provider-abstracted — implemented (`OllamaProvider`) |
 | Database   | PostgreSQL, SQLAlchemy, Alembic |
 | Voice      | openWakeWord (wake word), Faster-Whisper (STT), Piper (TTS) — implemented |
-| Frontend   | React, Tailwind CSS (planned) |
+| Frontend   | Local dashboard: one static HTML page served by the launcher (`/dashboard`); React/Tailwind still planned |
 | Desktop    | Windows background app + system tray (pystray) — implemented; installer planned |
 
 ## Architecture overview
@@ -121,7 +157,7 @@ agent/          brain + planner (decision/plan only), personal memory, RAG, know
 voice/          Voice pipeline: audio I/O, wakeword, stt, tts, VoiceEngine — implemented
 integrations/   External-service boundary: gmail, calendar and messaging (Telegram Bot API, read-only) implemented; others empty
 desktop/        Windows runtime: runtime (lifecycle), tray, launcher (startup) — implemented
-frontend/       React/Tailwind dashboard (not implemented)
+frontend/       React/Tailwind app (not implemented; the local dashboard is backend/api/dashboard.html)
 database/       Alembic migrations
 tests/          Automated tests (unit + tests/integration)
 docs/           Architecture, requirements, security, development, voice-system, windows-runtime, conversation-engine, agent-brain, security-and-permissions, personal-memory, personal-rag, knowledge-graph, tasks-and-reminders, event-and-deadline-intelligence docs

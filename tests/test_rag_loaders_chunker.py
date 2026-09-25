@@ -41,7 +41,7 @@ def test_pdf_pages_keep_their_page_numbers(tmp_path):
     assert "FastAPI" in doc.pages[0].text and "React" in doc.pages[1].text
 
 
-@pytest.mark.parametrize("name", ["a.docx", "a.exe", "a", "a.png", "a.html"])
+@pytest.mark.parametrize("name", ["a.doc", "a.docm", "a.exe", "a", "a.png", "a.html"])
 def test_unsupported_types_are_refused(tmp_path, name):
     with pytest.raises(UnsupportedDocument):
         detect_source_type(tmp_path / name)

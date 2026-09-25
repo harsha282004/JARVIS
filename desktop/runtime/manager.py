@@ -33,8 +33,11 @@ class RuntimeManager:
         self,
         engine_factory: Callable[[], VoiceEngine],
         stop_timeout: float = DEFAULT_STOP_TIMEOUT_SECONDS,
+        start_paused: Callable[[], bool] | None = None,
     ):
         self._engine_factory = engine_factory
+        # Asked once the engine is built: True means "do not open the microphone now" (a saved PRIVATE/PAUSED mode survives a restart).
+        self._start_paused = start_paused
         self._stop_timeout = stop_timeout
         self._command_lock = threading.RLock()
         self._state_lock = threading.Lock()
@@ -140,6 +143,16 @@ class RuntimeManager:
             self._set_state(RuntimeState.STOPPED)
             logger.info("VoiceEngine stopped")
 
+    def request_activation(self) -> bool:
+        """Start a conversation as if the wake word had been heard. Only while RUNNING (never opens a paused/private microphone)."""
+        with self._state_lock:
+            engine, state = self._engine, self._state
+        if engine is None or state is not RuntimeState.RUNNING:
+            logger.info("Manual activation ignored in state %s", state)
+            return False
+        engine.request_activation()
+        return True
+
     def handle_system_resume(self) -> None:
         """Called after Windows wakes from sleep: reacquire the microphone.
 
@@ -199,6 +212,10 @@ class RuntimeManager:
                     if stop.is_set() or self._state is not RuntimeState.STARTING:
                         return
                     self._engine = engine
+                if self._start_paused is not None and self._start_paused():
+                    self._set_state(RuntimeState.PAUSED, expected={RuntimeState.STARTING})
+                    logger.info("VoiceEngine built; starting paused because of the saved privacy mode (microphone not opened)")
+                    return
                 self._set_state(RuntimeState.RUNNING, expected={RuntimeState.STARTING})
                 logger.info("VoiceEngine started")
 

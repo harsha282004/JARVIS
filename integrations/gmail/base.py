@@ -24,6 +24,11 @@ class GmailClient(ABC):
         raise NotImplementedError
 
 
+    def get_attachment(self, message_id: str, attachment_id: str, max_bytes: int) -> bytes:
+        """The decoded bytes of one attachment, refusing anything larger than `max_bytes`. Optional: clients that cannot raise NotImplementedError."""
+        raise NotImplementedError
+
+
 class GmailIntegration(Integration):
     """Reports whether Gmail is set up, for the Integration registry."""
 

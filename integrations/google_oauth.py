@@ -54,7 +54,9 @@ class GoogleAuthenticator:
         scopes: tuple[str, ...],
         label: str,
         errors: OAuthErrors,
+        encrypt_at_rest: bool = False,
     ):
+        self._encrypt = encrypt_at_rest  # Windows DPAPI (backend/core/secrets.py); plaintext token files stay readable
         self._credentials_path = Path(credentials_path)
         self._token_path = Path(token_path)
         self._client_id = client_id.strip()
@@ -70,6 +72,10 @@ class GoogleAuthenticator:
     def _load(self) -> Any:
         from google.oauth2.credentials import Credentials
 
+        from backend.core.secrets import MARKER, read_secret
+
+        if self._token_path.read_text(encoding="utf-8").startswith(MARKER):
+            return Credentials.from_authorized_user_info(json.loads(read_secret(self._token_path)), list(self._scopes))
         return Credentials.from_authorized_user_file(str(self._token_path), list(self._scopes))
 
     def _refresh(self, credentials: Any) -> None:
@@ -167,6 +173,11 @@ class GoogleAuthenticator:
         try:
             self._token_path.parent.mkdir(parents=True, exist_ok=True)
             data = json.loads(credentials.to_json())
+            if self._encrypt:
+                from backend.core.secrets import write_secret
+
+                write_secret(self._token_path, json.dumps(data), encrypt=True)
+                return
             fd = os.open(self._token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(data, handle)
@@ -209,3 +220,31 @@ class GoogleAuthenticator:
         with self._lock:
             self._credentials = credentials
         logger.info("%s authorized (scopes: %s)", self._label, ", ".join(s.rsplit("/", 1)[-1] for s in self._scopes))
+
+
+    # ---- disconnect / revoke ----------------------------------------------------------------------------------
+
+    def forget(self) -> bool:
+        """Delete the local token and cached credentials (disconnect). The OAuth client file is left alone. True if a token existed."""
+        with self._lock:
+            self._credentials = None
+            existed = self._token_path.is_file()
+            if existed:
+                self._token_path.unlink()
+            return existed
+
+    def revoke_remote(self, http: Any = None) -> bool:
+        """Ask Google to revoke the grant (best effort; needs the network). The token value is sent to Google only, never logged."""
+        import httpx
+
+        try:
+            token = self.access_token()
+        except Exception:  # noqa: BLE001 - nothing to revoke without a usable token
+            return False
+        client = http or httpx.Client(timeout=10.0)
+        try:
+            response = client.post("https://oauth2.googleapis.com/revoke", data={"token": token}, headers={"Content-Type": "application/x-www-form-urlencoded"})
+            return response.status_code == 200
+        except httpx.HTTPError as exc:
+            logger.warning("%s revoke could not reach Google (%s)", self._label, type(exc).__name__)
+            return False

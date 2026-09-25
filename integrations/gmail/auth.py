@@ -29,7 +29,8 @@ class GmailAuthenticator(GoogleAuthenticator):
         token_path: str | Path,
         client_id: str = "",
         client_secret: str = "",
+        encrypt_at_rest: bool = False,
     ):
         super().__init__(
-            credentials_path, token_path, client_id, client_secret, scopes=SCOPES, label="Gmail", errors=_ERRORS
+            credentials_path, token_path, client_id, client_secret, scopes=SCOPES, label="Gmail", errors=_ERRORS, encrypt_at_rest=encrypt_at_rest
         )

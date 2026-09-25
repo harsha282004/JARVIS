@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS Dashboard</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b1f27; --muted: #5d6675; --line: #e2e5ea;
+    --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --info: #1d4ed8; --off: #6b7280;
+    --chip: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1218; --panel: #171b23; --text: #e6e9ef; --muted: #98a2b3; --line: #262c37;
+            --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --info: #7aa2ff; --off: #8b93a1; --chip: #202632; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; }
+  h1 { font-size: 18px; margin: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  section.wide { grid-column: 1 / -1; }
+  .status { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--chip); font-weight: 600; }
+  .pill.online, .pill.healthy { color: var(--ok); } .pill.degraded, .pill.starting { color: var(--warn); }
+  .pill.offline, .pill.failed, .pill.disconnected { color: var(--bad); } .pill.disabled, .pill.paused { color: var(--off); }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  li:last-child, tr:last-child td { border-bottom: 0; }
+  .muted { color: var(--muted); } .small { font-size: 12px; }
+  button { font: inherit; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--chip); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--info); } button.active { border-color: var(--info); color: var(--info); font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); }
+  .card h3 { margin: 0 0 6px; font-size: 15px; } .card .row { margin: 6px 0; } .card button { margin: 2px 4px 2px 0; padding: 3px 9px; font-size: 12px; }
+  .pill.connected, .pill.syncing { color: var(--ok); } .pill.authenticating { color: var(--warn); } .pill.error { color: var(--bad); }
+  details summary { cursor: pointer; color: var(--info); }
+  .err { color: var(--bad); }
+  @media (max-width: 600px) { main { padding: 12px; } header { padding: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>JARVIS</h1>
+  <div class="status" id="headline" aria-live="polite">Loading…</div>
+</header>
+<main>
+  <section class="wide"><h2>Integrations</h2><div id="integrations" class="cards">Loading…</div>
+    <p class="small muted">Status comes from the integration hub's recorded facts (last sync, last error). Write permissions are off until you turn them on, and every use still asks you first.</p></section>
+  <section><h2>System</h2><div id="system">Loading…</div></section>
+  <section><h2>Privacy</h2><div id="privacy">Loading…</div></section>
+  <section class="wide"><h2>Services</h2><div id="services">Loading…</div></section>
+  <section><h2>Deadlines</h2><ul id="deadlines"></ul></section>
+  <section><h2>Events</h2><ul id="events"></ul></section>
+  <section><h2>Pending tasks</h2><ul id="tasks"></ul></section>
+  <section><h2>Conflicts</h2><ul id="conflicts"></ul></section>
+  <section class="wide"><h2>Recommendations</h2><ul id="recs"></ul>
+    <p class="small muted">Each recommendation shows the evidence it is based on. Nothing here is acted on without your confirmation.</p></section>
+  <section><h2>Active context &amp; sources</h2><div id="context"></div></section>
+  <section><h2>Notifications</h2><ul id="notes"></ul></section>
+  <section><h2>Performance (measured)</h2><div id="perf"></div></section>
+  <section><h2>Recent activity log</h2><ul id="audit"></ul></section>
+</main>
+<script>
+const TOKEN = "__JARVIS_TOKEN__";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function api(path, options = {}) {
+  const r = await fetch(path, { ...options, headers: { "X-JARVIS-Token": TOKEN, "Content-Type": "application/json", ...(options.headers || {}) } });
+  if (!r.ok) { const t = await r.text(); throw new Error(r.status + " " + t.slice(0, 120)); }
+  return r.json();
+}
+const when = (iso) => iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "no time";
+const list = (id, items, render, empty) => { $(id).innerHTML = items.length ? items.map((i) => "<li>" + render(i) + "</li>").join("") : '<li class="muted">' + esc(empty) + "</li>"; };
+
+const ICON = { healthy: "🟢", connected: "🟢", syncing: "🔄", degraded: "🟡", authenticating: "🟡", disconnected: "⚪", error: "🔴", disabled: "⚫" };
+const ago = (iso) => { if (!iso) return "never"; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 172800 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " days ago"; };
+const OPT_IN = ["CREATE_EVENT", "UPDATE_EVENT", "DELETE_EVENT", "READ_ATTACHMENT", "INDEX_DOCUMENTS"];
+async function act(name, action, body) { try { await api("/integrations/" + name + "/" + action, { method: "POST", body: JSON.stringify(body || {}) }); } catch (e) { alert(e.message); } loadIntegrations(); }
+async function loadIntegrations() {
+  try {
+    const d = await api("/integrations");
+    $("integrations").innerHTML = d.integrations.map((i) => {
+      const perms = i.permissions_available.map((p) => '<label class="small" style="display:block"><input type="checkbox" data-n="' + esc(i.name) + '" data-p="' + esc(p) + '" ' + (i.permissions_granted.includes(p) ? "checked" : "") + "> " + esc(p) + (OPT_IN.includes(p) ? " (opt-in)" : "") + "</label>").join("");
+      return '<div class="card"><h3>' + (ICON[i.status] || "") + " " + esc(i.display_name) + ' <span class="pill ' + esc(i.status) + '">' + esc(i.status) + "</span></h3>" +
+        '<div class="row small muted">' + esc(i.detail) + '</div><div class="row small">Last sync: ' + ago(i.last_sync_at) + " · items stored: " + i.items + "</div>" +
+        (i.last_error ? '<div class="row small err">' + esc(i.last_error_kind) + ": " + esc(i.last_error) + "</div>" : "") +
+        '<details><summary>Permissions</summary>' + (perms || '<span class="small muted">none</span>') + "</details><div class=\"row\">" +
+        (i.configured ? '<button data-a="sync" data-n="' + esc(i.name) + '">Sync now</button><button data-a="disconnect" data-n="' + esc(i.name) + '">Disconnect</button>' : (i.manual_connect ? '<button data-a="connect" data-n="' + esc(i.name) + '">Connect</button>' : "")) +
+        '<button data-a="' + (i.enabled ? "disable" : "enable") + '" data-n="' + esc(i.name) + '">' + (i.enabled ? "Turn off" : "Turn on") + "</button></div></div>";
+    }).join("");
+    document.querySelectorAll("#integrations button").forEach((b) => b.onclick = () => {
+      if (b.dataset.a === "disconnect" && !confirm("Disconnect " + b.dataset.n + "? Its saved sign-in is deleted.")) return;
+      act(b.dataset.n, b.dataset.a, b.dataset.a === "disconnect" ? { purge: confirm("Also delete everything synchronized from it?"), revoke: true } : {});
+    });
+    document.querySelectorAll("#integrations input[type=checkbox]").forEach((c) => c.onchange = () => act(c.dataset.n, "permissions", { permission: c.dataset.p, granted: c.checked }));
+  } catch (e) { $("integrations").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+}
+
+async function load() {
+  loadIntegrations();
+  try {
+    const s = await api("/status");
+    $("headline").innerHTML = '<span class="pill ' + esc(s.overall || "") + '">' + esc((s.overall || "unknown").toUpperCase()) + "</span> " +
+      '<span class="pill">' + esc(s.voice_indicator_text || "Voice unknown") + '</span> <span class="pill">Privacy: ' + esc(s.privacy_mode) + "</span>" +
+      (s.offline_mode ? ' <span class="pill degraded">Offline mode</span>' : "");
+    $("system").innerHTML = "<table><tr><td>Runtime</td><td>" + esc(s.runtime) + "</td></tr><tr><td>Voice state</td><td>" + esc(s.voice_state ?? "–") +
+      "</td></tr><tr><td>Microphone stream open</td><td>" + (s.microphone_active ? "yes" : "no") + "</td></tr>" +
+      (s.last_error ? '<tr><td>Last error</td><td class="err">' + esc(s.last_error) + "</td></tr>" : "") + "</table>";
+  } catch (e) { $("headline").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+  try {
+    const p = await api("/privacy");
+    $("privacy").innerHTML = ["active", "background", "paused", "private"].map((m) => '<button data-m="' + m + '" class="' + (p.mode === m ? "active" : "") + '">' + m + "</button>").join(" ") +
+      '<p class="small muted">Microphone ' + (p.microphone ? "on" : "off") + " · wake word " + (p.wake_word ? "on" : "off") + " · external monitoring " +
+      (p.external_monitoring ? "on" : "off") + " · notifications: " + esc(p.notifications) + "</p>";
+    document.querySelectorAll("#privacy button").forEach((b) => b.onclick = async () => { await api("/privacy", { method: "POST", body: JSON.stringify({ mode: b.dataset.m }) }); load(); });
+  } catch (e) { $("privacy").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+  try {
+    const h = await api("/health/services");
+    $("services").innerHTML = "<table><tr><th>Service</th><th>State</th><th>Detail</th></tr>" +
+      h.services.map((x) => "<tr><td>" + esc(x.name) + (x.critical ? " *" : "") + '</td><td><span class="pill ' + esc(x.state) + '">' + esc(x.state) + '</span></td><td class="muted">' + esc(x.detail) + "</td></tr>").join("") +
+      '</table><p class="small muted">* critical. A service that is not set up shows as disabled, never as healthy.</p>';
+  } catch (e) { $("services").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+  try {
+    const d = await api("/intelligence/summary");
+    list("deadlines", d.deadlines, (x) => "<b>" + esc(x.text) + '</b><br><span class="muted small">' + esc(x.kind.replace(/_/g, " ")) + " · " + when(x.due) + " · from " + esc(x.source) + " · " + esc(x.confidence) + " confidence</span>", "No open deadlines found.");
+    list("events", d.events, (x) => "<b>" + esc(x.name) + '</b><br><span class="muted small">' + when(x.when) + " · " + (x.on_calendar ? "on your calendar" : "<b>not on your calendar</b>") + " · " + esc(x.sources.join(", ")) + "</span>", "No upcoming events found.");
+    list("tasks", d.pending_tasks, (x) => "<b>" + esc(x.title) + '</b><br><span class="muted small">' + esc(x.status) + (x.due ? " · due " + when(x.due) : "") + (x.dependency === "blocked" ? " · blocked" : "") + "</span>", "No open tasks.");
+    list("conflicts", d.conflicts, (x) => esc(x.text), "No conflicts found in the sources I can read.");
+    list("recs", d.recommendations, (x) => "<b>" + esc(x.title) + "</b> <span class='pill'>" + esc(x.urgency) + "</span><br>" + esc(x.text) +
+      "<details><summary>Evidence</summary><ul>" + x.evidence.map((e) => "<li class='small'>" + esc(e) + "</li>").join("") + "</ul></details>", "Nothing needs your attention right now.");
+    $("context").innerHTML = "<p>Active: " + (d.active_context.length ? esc(d.active_context.join(", ")) : '<span class="muted">nothing yet</span>') + "</p><p>Projects: " +
+      (d.projects.length ? esc(d.projects.join(", ")) : '<span class="muted">none detected</span>') + "</p><table>" +
+      Object.entries(d.sources).map(([k, v]) => "<tr><td>" + esc(k) + '</td><td><span class="pill ' + (v === "ok" ? "healthy" : v === "unavailable" ? "failed" : "disabled") + '">' + esc(v.replace("_", " ")) + "</span></td></tr>").join("") + "</table>";
+  } catch (e) { ["deadlines", "events", "tasks", "conflicts", "recs", "context"].forEach((id) => $(id).innerHTML = '<li class="err">' + esc(e.message) + "</li>"); }
+  try {
+    const n = await api("/notifications");
+    list("notes", n.history.slice(0, 8), (x) => "<b>" + esc(x.title) + '</b> <span class="muted small">' + esc(x.status) + " · " + when(x.created_at) + "</span><br>" + esc(x.body.slice(0, 160)), "No notifications yet.");
+  } catch (e) { $("notes").innerHTML = '<li class="err">' + esc(e.message) + "</li>"; }
+  try {
+    const m = await api("/metrics");
+    const rows = Object.entries(m.timers).map(([k, v]) => "<tr><td>" + esc(k) + "</td><td>" + v.count + "</td><td>" + v.mean_ms + " ms</td><td>" + v.p95_ms + " ms</td></tr>").join("");
+    $("perf").innerHTML = "<p>LLM calls: <b>" + (m.counters.llm_calls || 0) + "</b> · memory: " + (m.memory_mb ? m.memory_mb.toFixed(0) + " MB" : "n/a") + " · uptime " + Math.round(m.uptime_seconds) + " s</p>" +
+      (rows ? "<table><tr><th>Timer</th><th>n</th><th>mean</th><th>p95</th></tr>" + rows + "</table>" : '<p class="muted">No timings recorded yet.</p>');
+  } catch (e) { $("perf").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+  try {
+    const a = await api("/audit?limit=8");
+    list("audit", a.entries.reverse(), (x) => "<b>" + esc(x.action) + "</b> · " + esc(x.result) + '<br><span class="muted small">' + esc(x.tool) + " · confirmation: " + esc(x.confirmation) + " · " + when(x.timestamp) + "</span>", "No actions have been taken.");
+  } catch (e) { $("audit").innerHTML = '<li class="err">' + esc(e.message) + "</li>"; }
+}
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

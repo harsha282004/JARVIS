@@ -32,6 +32,7 @@ import backend.models.memory  # noqa: E402,F401
 import backend.models.tasks  # noqa: E402,F401
 import backend.models.events  # noqa: E402,F401
 import backend.models.proactive  # noqa: E402,F401
+import backend.models.hub  # noqa: E402,F401
 from backend.models.base import Base  # noqa: E402
 
 

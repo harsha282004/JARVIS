@@ -588,7 +588,7 @@ def test_messaging_reuses_only_the_gmail_text_helpers_not_gmail_itself():
 
 
 def test_no_provider_other_than_the_official_telegram_bot_api_exists():
-    assert sorted(p.stem for p in PKG.glob("*.py")) == ["__init__", "base", "intelligence", "intents", "models", "service", "telegram", "telegram_parser", "tools"]
+    assert sorted(p.stem for p in PKG.glob("*.py")) == ["__init__", "adapter", "base", "intelligence", "intents", "models", "service", "telegram", "telegram_parser", "tools"]
     from voice.bootstrap import build_messaging_registry
     from tests.test_messaging_runtime import settings
 

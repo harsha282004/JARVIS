@@ -275,6 +275,8 @@ class MemoryService(MemoryInterface):
     def _new_memory(self, candidate: MemoryCandidate) -> Memory:
         now = self._clock()
         data: dict[str, Any] = candidate.model_dump()
+        if data.get("slot"):
+            data["slot"] = normalize_slot(data["slot"]) or None  # stored in the same canonical form the conflict lookup uses
         return Memory(**data, created_at=now, updated_at=now, retracts=candidate.retracts)
 
     def _valid_id(self, memory_id: str) -> str:

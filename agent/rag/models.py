@@ -33,6 +33,7 @@ class SourceType(StrEnum):
     TXT = "txt"
     MARKDOWN = "markdown"
     PDF = "pdf"
+    DOCX = "docx"
 
 
 class Document(BaseModel):

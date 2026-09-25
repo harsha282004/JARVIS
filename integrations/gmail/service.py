@@ -13,7 +13,7 @@ from integrations.gmail.intelligence import (
     find_action_requests,
     run_summary,
 )
-from integrations.gmail.models import EmailClassification, GmailMessage, GmailSearchResult, GmailThread
+from integrations.gmail.models import EmailClassification, GmailMessage, GmailQueryError, GmailSearchResult, GmailThread
 from integrations.gmail.query import sanitize_query
 from backend.core.llm.base import LLMProvider
 from backend.core.logging import get_logger
@@ -51,12 +51,26 @@ class GmailService:
         logger.info("Gmail search done (results=%d, more=%s)", result.count, result.truncated)
         return result
 
+    def search_for_sync(self, query: str, max_results: int, page_token: str | None = None) -> GmailSearchResult:
+        """Search with a query built by CODE for synchronization (an epoch-second `after:` filter that the model-facing whitelist rejects). The shape is fixed
+        by a strict pattern, so nothing free-form can reach the API through here; model-proposed text always goes through `search`."""
+        import re
+
+        if not re.fullmatch(r"in:inbox (?:after:\d{9,11}|newer_than:\d{1,3}d)", query):
+            raise GmailQueryError("invalid sync query")
+        result = self._client.search(query, self.clamp(max_results), page_token)
+        logger.info("Gmail sync search done (results=%d, more=%s)", result.count, result.truncated)
+        return result
+
     def find(self, query: str, limit: int = RESOLVE_LIMIT) -> list[GmailMessage]:
         """Candidate messages for a description. Several candidates mean the caller must ask the user."""
         return self.search(query, limit).messages
 
     def get_message(self, message_id: str) -> GmailMessage:
         return self._client.get_message(message_id)
+
+    def get_attachment(self, message_id: str, attachment_id: str, max_bytes: int) -> bytes:
+        return self._client.get_attachment(message_id, attachment_id, max_bytes)
 
     def get_thread(self, thread_id: str) -> GmailThread:
         return self._client.get_thread(thread_id)

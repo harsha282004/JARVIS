@@ -39,8 +39,7 @@ Question
 
 ## Supported documents
 
-TXT, Markdown (`.md`, `.markdown`), PDF (text only). DOCX was not added (it would
-need another dependency). Not supported and rejected clearly: any other type,
+TXT, Markdown (`.md`, `.markdown`), PDF (text only) and DOCX (added in Phase 17: text only, no macros/`.docm`, XML bombs refused; no extra dependency). Not supported and rejected clearly: any other type,
 encrypted PDFs, binary or non-UTF-8 text, scanned/image-only PDFs (no OCR; they
 fail with "no extractable text"). No Gmail/WhatsApp/Calendar ingestion, no web
 crawling, no cloud drives.

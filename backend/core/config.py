@@ -217,7 +217,77 @@ class Settings(BaseSettings):
     # false = run without a tray icon (headless; stop with Ctrl+C).
     JARVIS_TRAY_ENABLED: bool = True
 
-    @field_validator("JARVIS_PROACTIVE_QUIET_START", "JARVIS_PROACTIVE_QUIET_END")
+    # --- Production hardening (Phase 16) ---
+    # Directory for JARVIS's own local state (privacy mode, preferences, audit log, timeline). Relative to the project folder; git-ignored.
+    JARVIS_STATE_DIR: str = ".jarvis"
+    # true = one JSON object per log line (timestamp, severity, component, event, correlation id) instead of the readable line.
+    JARVIS_LOG_JSON: bool = False
+    # true = the tray runtime also serves the local dashboard and health API on API_HOST:API_PORT (127.0.0.1 only by default).
+    JARVIS_API_ENABLED: bool = True
+    # true = never contact cloud services (Gmail, Calendar, messaging); local memory, documents, tasks and reminders keep working.
+    JARVIS_OFFLINE_MODE: bool = False
+    # Seconds between service health checks (tray/dashboard status and automatic recovery).
+    JARVIS_HEALTH_INTERVAL_SECONDS: float = Field(default=30.0, ge=5.0, le=3600.0)
+    # Restart a crashed voice subsystem automatically (with backoff; gives up after JARVIS_RECOVERY_MAX_ATTEMPTS, then waits and retries).
+    JARVIS_AUTO_RECOVERY: bool = True
+    JARVIS_RECOVERY_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=50)
+    JARVIS_RECOVERY_INITIAL_SECONDS: float = Field(default=2.0, ge=0.1, le=300.0)
+    JARVIS_RECOVERY_COOLDOWN_SECONDS: float = Field(default=300.0, ge=1.0, le=86400.0)
+    # active | background | paused | private. Applied only when no privacy mode has been saved yet (a saved PRIVATE survives restarts).
+    JARVIS_PRIVACY_DEFAULT: Literal["active", "background", "paused", "private"] = "active"
+    # PostgreSQL connection pool (ignored for other databases).
+    DB_POOL_SIZE: int = Field(default=5, ge=1, le=50)
+    DB_MAX_OVERFLOW: int = Field(default=5, ge=0, le=50)
+    DB_POOL_RECYCLE_SECONDS: int = Field(default=1800, ge=30)
+    DB_CONNECT_TIMEOUT_SECONDS: int = Field(default=10, ge=1, le=120)
+    # Notification reliability: the same event is not announced again within this many minutes unless it changed.
+    JARVIS_NOTIFICATION_COOLDOWN_MINUTES: int = Field(default=60, ge=0, le=1440)
+
+    # --- Personal intelligence (Phase 17; read-only analysis and planning, see docs/INTELLIGENCE_ENGINE.md) ---
+    JARVIS_INTELLIGENCE_ENABLED: bool = True
+    # Working day used when planning (HH:MM, local time). A plan never schedules outside it.
+    JARVIS_WORKDAY_START: str = "09:00"
+    JARVIS_WORKDAY_END: str = "18:00"
+    # Minutes assumed for a task with no estimate, and the gap kept before and after calendar events when planning.
+    JARVIS_DEFAULT_TASK_MINUTES: int = Field(default=60, ge=5, le=480)
+    JARVIS_PLAN_BUFFER_MINUTES: int = Field(default=10, ge=0, le=60)
+    # true = create a task automatically when an email asks you to do something by a date; false (default) = ask first.
+    JARVIS_AUTO_CREATE_TASKS: bool = False
+    # Seconds between background analysis runs (they are skipped when nothing changed and also triggered by events).
+    JARVIS_INTELLIGENCE_INTERVAL_SECONDS: float = Field(default=300.0, ge=30.0, le=86400.0)
+    # Proactive recommendations from the intelligence layer (delivered through the NotificationCenter, never acted on).
+    JARVIS_INTELLIGENCE_PROACTIVE: bool = False
+    # Optional scheduled briefings (HH:MM local). The morning briefing is always available on request.
+    JARVIS_BRIEFING_TIME: str = "08:00"
+    JARVIS_EVENING_REVIEW_ENABLED: bool = False
+    JARVIS_EVENING_REVIEW_TIME: str = "20:00"
+
+    # --- Integration Hub (Phase 18; see docs/INTEGRATION_ARCHITECTURE.md) ---
+    JARVIS_HUB_ENABLED: bool = True
+    # Encrypt OAuth/API tokens at rest with Windows DPAPI (bound to your Windows account). Old plaintext token files keep working and are re-saved encrypted on refresh.
+    JARVIS_ENCRYPT_TOKENS: bool = True
+    # How often the sync loop looks for integrations that are due (each integration also has its own interval and backoff).
+    JARVIS_SYNC_LOOP_SECONDS: float = Field(default=60.0, ge=10.0, le=3600.0)
+    # First Gmail sync reads this many days back; later syncs read only what is new.
+    JARVIS_GMAIL_SYNC_INITIAL_DAYS: int = Field(default=14, ge=1, le=90)
+    # Synchronized items older than this are deleted (their sources are untouched).
+    JARVIS_HUB_RETENTION_DAYS: int = Field(default=90, ge=7, le=3650)
+    # Where attachments you explicitly ask JARVIS to index are saved.
+    JARVIS_GMAIL_ATTACHMENTS_DIR: str = ".jarvis/attachments"
+    # GitHub (read-only). A fine-grained token (GITHUB_TOKEN or the encrypted token file) is recommended; the OAuth client id enables the device flow.
+    JARVIS_GITHUB_ENABLED: bool = False
+    GITHUB_TOKEN: SecretStr = SecretStr("")
+    JARVIS_GITHUB_TOKEN_PATH: str = ".jarvis/github/token"
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    JARVIS_GITHUB_OAUTH_SCOPE: str = "read:user"
+    # Documents: folders JARVIS may watch and index (separate paths with ";"). Empty = nothing is watched.
+    JARVIS_DOCUMENT_DIRS: str = ""
+    JARVIS_DOCUMENT_REMOVE_DELETED: bool = False
+
+    @field_validator(
+        "JARVIS_PROACTIVE_QUIET_START", "JARVIS_PROACTIVE_QUIET_END", "JARVIS_WORKDAY_START", "JARVIS_WORKDAY_END",
+        "JARVIS_BRIEFING_TIME", "JARVIS_EVENING_REVIEW_TIME",
+    )
     @classmethod
     def _valid_clock(cls, value: str) -> str:
         value = value.strip()

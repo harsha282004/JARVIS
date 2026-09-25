@@ -109,6 +109,25 @@ class HttpGmailClient(GmailClient):
         thread = parse_thread(self._get(f"threads/{validate_id(thread_id)}", {"format": "full"}))
         return thread.model_copy(update={"messages": thread.messages[-MAX_THREAD_MESSAGES:]})
 
+    def get_attachment(self, message_id: str, attachment_id: str, max_bytes: int) -> bytes:
+        """One attachment (read-only scope is enough). The size is checked before and after decoding so a hostile size claim cannot exhaust memory."""
+        import base64
+
+        data = self._get(f"messages/{validate_id(message_id)}/attachments/{validate_id(attachment_id)}", {})
+        size = data.get("size")
+        if isinstance(size, int) and size > max_bytes:
+            raise GmailResponseError("attachment is larger than the allowed size")
+        encoded = data.get("data")
+        if not isinstance(encoded, str) or len(encoded) > (max_bytes * 4) // 3 + 8:
+            raise GmailResponseError("attachment data missing or too large")
+        try:
+            raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        except ValueError:
+            raise GmailResponseError("attachment was not valid base64") from None
+        if len(raw) > max_bytes:
+            raise GmailResponseError("attachment is larger than the allowed size")
+        return raw
+
     # ---- transport ----------------------------------------------------------------------------------------------
 
     def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:

@@ -1,4 +1,7 @@
 # Environment / secrets
+*.pem
+*.key
+api_token*
 # Gmail OAuth client file and token (never commit)
 /.jarvis/
 client_secret*.json
@@ -45,6 +48,12 @@ frontend/.vite/
 # Logs
 *.log
 logs/
+
+# Scratch, corrupted-state backups and installer output
+scratch/
+*.corrupt
+*.tmp
+installer/
 
 # OS / editor
 .DS_Store

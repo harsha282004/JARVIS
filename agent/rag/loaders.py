@@ -6,6 +6,7 @@ typed errors; nothing is ever fabricated.
 """
 
 import re
+import zipfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 
 from agent.rag.models import CorruptDocument, SourceType, UnsupportedDocument
 
-_EXTENSIONS = {".txt": SourceType.TXT, ".md": SourceType.MARKDOWN, ".markdown": SourceType.MARKDOWN, ".pdf": SourceType.PDF}
+_EXTENSIONS = {".txt": SourceType.TXT, ".md": SourceType.MARKDOWN, ".markdown": SourceType.MARKDOWN, ".pdf": SourceType.PDF, ".docx": SourceType.DOCX}
 SUPPORTED_EXTENSIONS = frozenset(_EXTENSIONS)
 _BINARY_SNIFF_BYTES = 8192
 
@@ -98,7 +99,64 @@ class PdfLoader(DocumentLoader):
         return ExtractedDocument(SourceType.PDF, pages, title=title)
 
 
+MAX_DOCX_XML_BYTES = 30 * 1024 * 1024
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+class DocxLoader(DocumentLoader):
+    """DOCX text from word/document.xml (paragraphs, tabs and line breaks; tables are read as their paragraphs). Text only: no macros
+    (a .docm is not accepted), embedded objects, links or fields are run or followed. The XML is bounded in size and refused if it
+    declares a DOCTYPE or entities (the classic XML-bomb vectors), so a hostile file cannot exhaust memory."""
+
+    def load(self, path: Path) -> ExtractedDocument:
+        import xml.etree.ElementTree as ET
+
+        try:
+            with zipfile.ZipFile(path) as archive:
+                info = archive.getinfo("word/document.xml")
+                if info.file_size > MAX_DOCX_XML_BYTES:
+                    raise CorruptDocument("The document is too large to read")
+                xml = archive.read("word/document.xml")
+                title = None
+                try:
+                    core = archive.read("docProps/core.xml")
+                    if b"<!DOCTYPE" not in core and b"<!ENTITY" not in core:
+                        node = ET.fromstring(core).find("{http://purl.org/dc/elements/1.1/}title")
+                        title = (node.text or "").strip() or None if node is not None else None
+                except (KeyError, ET.ParseError):
+                    title = None
+        except CorruptDocument:
+            raise
+        except (zipfile.BadZipFile, KeyError, OSError) as exc:
+            raise CorruptDocument(f"Could not read the DOCX file ({type(exc).__name__})") from None
+        if b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
+            raise CorruptDocument("The document contains constructs that are not allowed")
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError:
+            raise CorruptDocument("Could not parse the DOCX content") from None
+        paragraphs = []
+        for para in root.iter(f"{_W}p"):
+            parts = []
+            for node in para.iter():
+                if node.tag == f"{_W}t" and node.text:
+                    parts.append(node.text)
+                elif node.tag == f"{_W}tab":
+                    parts.append(" ")
+                elif node.tag in (f"{_W}br", f"{_W}cr"):
+                    parts.append(" ")
+            line = "".join(parts).strip()
+            if line:
+                paragraphs.append(line)
+        return ExtractedDocument(SourceType.DOCX, [Page(None, chr(10).join(paragraphs))], title=title)
+
+
 def load_document(path: Path) -> ExtractedDocument:
     source_type = detect_source_type(path)
-    loader: DocumentLoader = PdfLoader() if source_type is SourceType.PDF else TextLoader(source_type)
+    if source_type is SourceType.PDF:
+        loader: DocumentLoader = PdfLoader()
+    elif source_type is SourceType.DOCX:
+        loader = DocxLoader()
+    else:
+        loader = TextLoader(source_type)
     return loader.load(path)

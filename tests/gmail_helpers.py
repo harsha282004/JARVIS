@@ -68,6 +68,14 @@ class FakeGmailClient(GmailClient):
     def __init__(self, raws=()):
         self.raws = list(raws)
         self.calls: list[tuple] = []
+        self.attachments: dict[tuple[str, str], bytes] = {}
+
+    def get_attachment(self, message_id, attachment_id, max_bytes):
+        self.calls.append(("get_attachment", message_id, attachment_id))
+        data = self.attachments[(message_id, attachment_id)]
+        if len(data) > max_bytes:
+            raise GmailNotFound("too large")
+        return data
 
     def _matches(self, raw, query: str) -> bool:
         m = parse_message(raw)
@@ -78,6 +86,8 @@ class FakeGmailClient(GmailClient):
                 ok = token[5:].lower() in ((m.sender.email + " " + m.sender.name).lower() if m.sender else "")
             elif token == "has:attachment":
                 ok = m.has_attachments
+            elif token.startswith("after:") and token[6:].isdigit():
+                ok = m.timestamp is not None and m.timestamp.timestamp() >= int(token[6:])
             elif ":" in token:
                 ok = True
             else:
@@ -90,8 +100,10 @@ class FakeGmailClient(GmailClient):
         self.calls.append(("search", query, max_results, page_token))
         hits = [parse_message(r) for r in self.raws if self._matches(r, query)]
         hits.sort(key=lambda m: m.sort_key, reverse=True)
-        shown = hits[:max_results]
-        return GmailSearchResult(query=query, messages=shown, estimated_total=len(hits), truncated=len(hits) > len(shown))
+        offset = int(page_token) if page_token else 0
+        shown = hits[offset: offset + max_results]
+        more = offset + len(shown) < len(hits)
+        return GmailSearchResult(query=query, messages=shown, estimated_total=len(hits), truncated=more, next_page_token=str(offset + len(shown)) if more else None)
 
     def get_message(self, message_id):
         self.calls.append(("get_message", message_id))

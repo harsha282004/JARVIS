@@ -65,10 +65,12 @@ from agent.memory.repository import MemoryRepository
 from agent.memory.service import MemoryService
 from pathlib import Path
 
+from backend.core import integration_switch as switch
 from backend.core.config import Settings
 from backend.core.database import SessionLocal
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProvider
+from backend.core.llm.metered import MeteredLLM
 from backend.core.llm.ollama_provider import OllamaProvider
 from backend.core.logging import get_logger
 from backend.core.security import AuditLog, PermissionManager
@@ -287,6 +289,7 @@ def build_gmail_authenticator(settings: Settings) -> GmailAuthenticator:
         _project_path(settings.JARVIS_GMAIL_TOKEN_PATH),
         settings.GMAIL_CLIENT_ID,
         settings.GMAIL_CLIENT_SECRET.get_secret_value(),
+        encrypt_at_rest=settings.JARVIS_ENCRYPT_TOKENS,
     )
 
 
@@ -297,7 +300,7 @@ def build_gmail_service(settings: Settings, llm: LLMProvider) -> GmailService | 
         return None
     auth = build_gmail_authenticator(settings)
     return GmailService(
-        HttpGmailClient(auth), llm, max_results=settings.JARVIS_GMAIL_MAX_RESULTS, is_ready=auth.is_ready
+        HttpGmailClient(auth), llm, max_results=settings.JARVIS_GMAIL_MAX_RESULTS, is_ready=lambda: auth.is_ready() and switch.enabled("gmail")
     )
 
 
@@ -311,6 +314,8 @@ def _telegram_token_source(settings: Settings):
     """The bot token: MESSAGING_TELEGRAM_BOT_TOKEN, else the token file. Read on demand, never logged or cached in text."""
 
     def read() -> str:
+        if not switch.enabled("messaging"):
+            return ""  # switched off by the user: the provider then reports "not set up"
         value = settings.MESSAGING_TELEGRAM_BOT_TOKEN.get_secret_value().strip()
         if value:
             return value
@@ -379,7 +384,7 @@ def build_calendar_authenticator(settings: Settings) -> CalendarAuthenticator:
     client_secret = settings.CALENDAR_CLIENT_SECRET.get_secret_value() or settings.GMAIL_CLIENT_SECRET.get_secret_value()
     return CalendarAuthenticator(
         _project_path(settings.JARVIS_CALENDAR_CREDENTIALS_PATH), _project_path(settings.JARVIS_CALENDAR_TOKEN_PATH),
-        client_id, client_secret,
+        client_id, client_secret, encrypt_at_rest=settings.JARVIS_ENCRYPT_TOKENS,
     )
 
 
@@ -388,7 +393,7 @@ def build_calendar_service(settings: Settings, zone) -> CalendarService | None:
     if not settings.JARVIS_CALENDAR_ENABLED:
         return None
     auth = build_calendar_authenticator(settings)
-    return CalendarService(HttpCalendarClient(auth, zone=zone), zone=zone, max_results=settings.JARVIS_CALENDAR_MAX_RESULTS, is_ready=auth.is_ready)
+    return CalendarService(HttpCalendarClient(auth, zone=zone), zone=zone, max_results=settings.JARVIS_CALENDAR_MAX_RESULTS, is_ready=lambda: auth.is_ready() and switch.enabled("calendar"))
 
 
 def build_calendar_tools_for(settings: Settings, zone, *, events: EventService | None = None) -> list[CalendarTool]:
@@ -418,8 +423,8 @@ def build_event_tools_for(
     return build_event_tools(context)
 
 
-def _build_conversation(settings: Settings, task_system: TaskSystem | None = None) -> ConversationEngine:
-    llm = _build_llm(settings)
+def _build_conversation(settings: Settings, task_system: TaskSystem | None = None, intelligence=None, bus=None) -> ConversationEngine:
+    llm = MeteredLLM(_build_llm(settings))  # counts LLM calls and latency (backend.core.metrics)
     memory = _build_memory(settings)
     rag = build_rag_service(settings, llm)
     graph = build_graph_service(settings)
@@ -483,10 +488,12 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
         graph=GraphContextProvider(graph) if graph is not None else None,
         permissions=permissions,
         actions=TaskActionExecutor(tools, permissions) if tools and agent is not None else None,
+        intelligence=intelligence,
+        bus=bus,
     )
 
 
-def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None) -> VoiceEngine:
+def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None, intelligence=None, bus=None) -> VoiceEngine:
     """Construct a VoiceEngine wired to the providers named in `settings`.
 
     Raises ProviderNotConfiguredError / AudioDeviceError with a clear
@@ -502,7 +509,7 @@ def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None
     return VoiceEngine(
         wakeword=_build_wakeword(settings),
         stt=_build_stt(settings),
-        conversation=_build_conversation(settings, task_system),
+        conversation=_build_conversation(settings, task_system, intelligence, bus),
         tts=_build_tts(settings),
         audio_input=AudioInput(
             sample_rate=settings.AUDIO_SAMPLE_RATE, device=settings.MICROPHONE_DEVICE

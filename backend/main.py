@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.api.routes.health import router as health_router
+from backend.api.routes.system import router as system_router
 from backend.core.config import get_settings
 from backend.core.logging import configure_logging, get_logger
 
@@ -26,3 +27,4 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 app.include_router(health_router)
+app.include_router(system_router)

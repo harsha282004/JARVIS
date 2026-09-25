@@ -11,6 +11,7 @@ Voice states are unchanged: WAITING -> LISTENING -> TRANSCRIBING -> THINKING
 follow-up turns before returning to WAITING.
 """
 
+import threading
 from collections.abc import Callable
 
 import numpy as np
@@ -18,6 +19,7 @@ import numpy as np
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProviderError
 from backend.core.logging import get_logger
+from backend.core.metrics import metrics
 from agent.tasks.notifications import AnnouncementQueue
 from voice.audio import AudioInput, AudioOutput
 from voice.exceptions import VoiceProviderError
@@ -63,6 +65,12 @@ class VoiceEngine:
         self._activation_reply = activation_reply
         self._announcements = announcements
         self.state = VoiceState.WAITING
+        self._manual_wake = threading.Event()
+
+    def request_activation(self) -> None:
+        """"Talk to JARVIS" from the tray: behaves like hearing the wake word, on the next audio frame. It does nothing while
+        the runtime is paused or private (the engine is not listening then), so it can never open a closed microphone."""
+        self._manual_wake.set()
 
     @property
     def microphone_active(self) -> bool:
@@ -72,14 +80,16 @@ class VoiceEngine:
     def _speak(self, text: str) -> None:
         self.state = VoiceState.SPEAKING
         logger.info("TTS_STARTED length=%d", len(text))
-        samples, sample_rate = self._tts.synthesize(text)
+        with metrics.timer("tts_synthesis_ms"):
+            samples, sample_rate = self._tts.synthesize(text)
         self._audio_output.play(samples, sample_rate)
         logger.info("TTS_COMPLETED")
 
     def _transcribe(self, utterance: np.ndarray) -> str:
         self.state = VoiceState.TRANSCRIBING
         logger.info("STT_STARTED")
-        text = self._stt.transcribe(utterance, self._sample_rate)
+        with metrics.timer("stt_ms"):
+            text = self._stt.transcribe(utterance, self._sample_rate)
         logger.info("STT_COMPLETED length=%d", len(text))
         return text
 
@@ -92,7 +102,8 @@ class VoiceEngine:
         self.state = VoiceState.THINKING
         logger.info("LLM_REQUEST_STARTED")
         try:
-            response = self._conversation.respond(text)
+            with metrics.timer("conversation_ms"):  # the agent, its tools and any LLM calls for this turn
+                response = self._conversation.respond(text)
         except LLMProviderError as exc:
             logger.error("LLM request failed: %s", exc)
             self.state = VoiceState.WAITING
@@ -143,13 +154,18 @@ class VoiceEngine:
                     return None
                 self._speak_announcements()
                 frame = self._audio_input.read_frame()
+                if self._manual_wake.is_set():
+                    self._manual_wake.clear()
+                    logger.info("MANUAL_ACTIVATION")
+                    break
                 if self._wakeword.process(frame):
                     logger.info("WAKE_WORD_DETECTED")
                     break
 
             self.state = VoiceState.LISTENING
             logger.info("LISTENING_STARTED duration_s=%s", self._listen_seconds)
-            self._speak(self._activation_reply)
+            with metrics.timer("wake_to_prompt_ms"):  # wake word heard -> "Yes?" has been synthesized and played
+                self._speak(self._activation_reply)
             utterance = self._capture()
 
         response: str | None = None
