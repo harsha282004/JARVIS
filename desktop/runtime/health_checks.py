@@ -128,9 +128,53 @@ def model_file_check(path: str, label: str, enabled: bool = True) -> Callable[[]
     return run
 
 
+_MALE_PIPER = {"ryan", "joe", "alan", "northern_english_male", "john", "danny", "kusal", "bryce", "hfc_male", "l2arctic", "arctic", "alba_male"}
+
+
+def tts_voice_check(model_path: str, voice: str) -> Callable[[], Health]:
+    """The Piper voice that will actually speak, verified on disk: missing -> FAILED with the exact model needed; present -> the real voice name (from the model's own
+    .onnx.json dataset), never just the configured name."""
+
+    def run() -> Health:
+        if not model_path:
+            return Health(ServiceState.FAILED, "text-to-speech voice model path is not set (TTS_MODEL_PATH); male voice: en_US-ryan-medium")
+        p = Path(model_path)
+        if not p.is_file():
+            return Health(ServiceState.FAILED, f"voice model '{p.name}' not found: download en_US-ryan-medium into models/tts (see docs/voice-system.md)")
+        dataset = ""
+        try:
+            import json
+
+            dataset = str(json.loads(Path(str(p) + ".json").read_text(encoding="utf-8")).get("dataset", ""))
+        except Exception:  # noqa: BLE001 - the sidecar is informational
+            pass
+        name = p.name.removesuffix(".onnx")
+        note = "male" if dataset.lower() in _MALE_PIPER else (f"voice '{dataset}'" if dataset else "voice model")
+        return Health(ServiceState.HEALTHY, f"text-to-speech {name} ({note}) present")
+
+    return run
+
+
 def llm_check(base_url: str, probe: Callable[[str], bool]) -> Callable[[], Health]:
     def run() -> Health:
         return Health(ServiceState.HEALTHY, "LLM server reachable") if probe(base_url) else Health(ServiceState.DISCONNECTED, "LLM server not reachable")
+
+    return run
+
+
+def llm_provider_check(provider, offline: Callable[[], bool] = lambda: False) -> Callable[[], Health]:
+    """Staged LLM health without spending tokens (key -> reachable -> authenticated -> model available). Credentials never appear in the result. Providers without a
+    staged `health()` (Ollama) fall back to their reachability probe."""
+
+    def run() -> Health:
+        if offline():
+            return Health(ServiceState.DISABLED, "offline mode: the language model is not contacted")
+        h = provider.health(inference=False)
+        label = f"{h.provider} · {h.model}"
+        if h.ok:
+            return Health(ServiceState.HEALTHY, f"{label} · reachable · authenticated · model available (inference not probed)")
+        state = {"rate_limit": ServiceState.DEGRADED, "server": ServiceState.DEGRADED, "timeout": ServiceState.DEGRADED}.get(h.problem, ServiceState.FAILED if h.problem in ("config", "auth", "model") else ServiceState.DISCONNECTED)
+        return Health(state, f"{label} · {h.detail}")
 
     return run
 
@@ -144,6 +188,17 @@ def ollama_probe(base_url: str, timeout: float = 1.0) -> bool:
             return response.status == 200
     except Exception:  # noqa: BLE001
         return False
+
+
+def _llm_health(settings: Settings) -> Callable[[], Health]:
+    name = settings.LLM_PROVIDER.strip().lower()
+    if name == "ollama":
+        return _Cached(llm_check(settings.OLLAMA_BASE_URL, ollama_probe), 30.0)
+    if name == "groq":
+        from backend.core.llm.factory import build_llm
+
+        return _Cached(llm_provider_check(build_llm(settings), lambda: settings.JARVIS_OFFLINE_MODE), 60.0)
+    return component_check("llm", False)
 
 
 def integration_check(name: str, service, live_call: Callable[[], object], settings: Settings, ttl: float = 300.0) -> Callable[[], Health]:
@@ -202,7 +257,7 @@ def build_health_monitor(monitor: HealthMonitor, *, settings: Settings, manager:
                          gmail=None, calendar=None, messaging=None, memory_enabled: bool = False, hub=None, voice_status=None) -> HealthMonitor:
     """Registers every service the user cares about. The checks stay honest: a service that is off says so."""
     monitor.register("voice_runtime", runtime_check(manager), critical=True)
-    stt, mic, tts = runtime_check(manager), microphone_check(manager, privacy), model_file_check(settings.TTS_MODEL_PATH, "text-to-speech")
+    stt, mic, tts = runtime_check(manager), microphone_check(manager, privacy), tts_voice_check(settings.TTS_MODEL_PATH, settings.TTS_VOICE)
     if voice_status is not None:  # the engine's own observations refine the checks
         stt, mic, tts = (voice_pipeline_check(c, voice_status, part) for c, part in ((stt, "stt"), (mic, "microphone"), (tts, "tts")))
     monitor.register("stt", stt)  # the speech model is loaded when the voice runtime starts
@@ -210,8 +265,7 @@ def build_health_monitor(monitor: HealthMonitor, *, settings: Settings, manager:
     monitor.register("wake_word", model_file_check(settings.WAKE_WORD_MODEL_PATH, "wake word", settings.WAKE_WORD_ENABLED))
     monitor.register("tts", tts)
     monitor.register("database", _Cached(database_check(db_status), 15.0), critical=True)  # the schema check reads migration files: not on every call
-    monitor.register("llm", _Cached(llm_check(settings.OLLAMA_BASE_URL, ollama_probe), 30.0) if settings.LLM_PROVIDER == "ollama"
-                     else component_check("llm", False))
+    monitor.register("llm", _llm_health(settings))
     monitor.register("scheduler", thread_check("scheduler", scheduler_alive))
     monitor.register("memory", component_check("memory", memory_enabled, "personal memory enabled"))
     monitor.register("gmail", integration_check("Gmail", gmail, lambda: gmail.search("in:inbox", 1), settings))

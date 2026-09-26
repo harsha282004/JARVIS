@@ -123,3 +123,55 @@ Audio lives in memory for one utterance and is never written, logged or sent any
 ## Phase 22: workflows by voice
 
 Workflow requests, answers and controls arrive through the same path as every spoken command. "Stop", "Cancel this", "Never mind" and "Cancel the workflow" end a running workflow (and clear a question it was waiting on) — `IntelligenceRouter.cancel_task()` cancels workflows as well as autonomous tasks, and the cancel words are intercepted before the confirmation engine so they can never be mistaken for a "no" that lets the workflow continue. A spoken "yes" confirms through the same single-use, step-bound `ConfirmationEngine`; nothing about the voice path lowers a requirement. Results of long workflows are announced through the notification queue (priority and Do-Not-Disturb per Phase 19), deduplicated. The morning briefing wording is "Good morning. You have three meetings today, two high-priority emails, and one upcoming deadline." followed by the most pressing items with their reasons; "Tell me more" (within 30 minutes) speaks the reasons behind them.
+
+## Microphone capture on Windows (device manager)
+
+Backend: `sounddevice` / PortAudio (blocking `InputStream`). Windows exposes one physical microphone as several endpoints under four host APIs (MME, DirectSound, WASAPI, WDM-KS) with near-identical names and unstable indexes.
+
+```
+Windows input endpoint(s)
+  -> voice.mic.MicrophoneDeviceManager   list (output-only removed) | default input | ordered candidates (config, default, same-named endpoints, other real mics; virtual mixes/sound mapper never)
+  -> voice.audio.AudioInput.open()       per candidate: pipeline format (16 kHz mono) if accepted, else the device's native rate/channels
+                                          + a 0.3 s probe: an endpoint that opens but is digitally silent (all zeros) is skipped for the next one
+  -> to_pipeline()                       (native format only) channel mean + 3:1 average / linear resample -> int16 mono frames of 1280 samples @ 16 kHz
+  -> wake word / VAD / STT               unchanged; the wake word and the utterance recorder read the SAME AudioInput
+```
+
+Nothing is hard-coded to an index: the default input is resolved on every `open()`, so a reconnect (the engine's existing microphone-error/retry path) re-discovers the device. WDM-KS endpoints (blocking API unsupported) are last resort. Logged metadata only (`Microphone: {mode, device, host_api, sample_rate, channels, input_channels, resampled, status}`); audio is never stored, logged or sent.
+
+### Windows microphone troubleshooting
+1. **List and test:** `python scripts/voice_real_check.py --devices` (lists, opens nothing) and `python scripts/voice_real_check.py --mic-only --mic --seconds 5` (speak during it). PASS = real samples received; FAIL = zeros or a noise floor of at most 4/32768; WARN = works but very quiet. Values are fractions of full scale (a quiet room is ~0.00002, so it looks like `0.0000` at four decimals — the old script printed exactly that; the raw integer peak is now shown).
+2. **Default device:** Windows Settings > System > Sound > Input: pick the microphone, check the level bar moves. JARVIS follows the Windows default in `auto` mode.
+3. **Privacy:** Settings > Privacy & security > Microphone: "Let desktop apps access your microphone" must be on (a blocked app gets exact zeros; JARVIS then reports `no_signal`).
+4. **Pick a device explicitly:** `MICROPHONE_DEVICE=Microphone Array (Realtek(R) Audio)` (name; preferred) or an index; `auto` or empty = default.
+5. **Very low level:** raise Input > Properties > Levels (and Microphone Boost); WASAPI shared mode cannot open 16 kHz, which is handled by the native-format path.
+6. **Unplug/disable:** the engine reports its existing microphone error state and reopens when the device is back (no app restart).
+
+## Wake policy, sleep and the male voice (strict wake update)
+
+**Root cause of the spontaneous "Yes?"** (from the logs and the code): "Yes?" is spoken only after `_wait_for_wake` returns, and it returned on (1) any single 80 ms frame whose openWakeWord score reached the threshold (0.5) - ambient speech, TV, the speaker's own echo and other words that sound like "hey jarvis" score that high for one frame; the log shows `WAKE_WORD_DETECTED` followed by `No speech captured` several times; and (2) a stale tray/API "Talk to JARVIS" request: `request_activation()` set a flag that stayed set until the next time the engine listened, so a click made while paused (or an unconsumed API call) produced a "Yes?" later with nobody speaking. The barge-in monitor also used the same one-frame trigger while JARVIS was speaking.
+
+**Supported wake phrases: exactly "Hey JARVIS" and "JARVIS"** (`voice/wake.py`; case, punctuation and spacing ignored; no fuzzy matching: "Okay Jarvis", "Yes Jarvis", "Hey Travis", "jarvice", "hey jarvis play music" do not wake it).
+
+```
+microphone frame -> openWakeWord score -> WakeGate
+   blocked (debounce / after JARVIS spoke / after a rejection)              -> ignored
+   rising score watched until it ends or becomes sustained (2 frames >= WAKE_DIRECT_THRESHOLD)
+   candidate (>= WAKE_WORD_THRESHOLD, or >= 2 frames >= WAKE_CANDIDATE_FLOOR) or a strong wake
+        -> short LOCAL speech check of the last ~2.4 s (memory only)  -> must normalise to exactly "hey jarvis" | "jarvis"
+        -> WakeEvent (validated) -> "Yes?" -> conversation
+   anything else -> nothing is spoken; wake_rejected is logged (score, reason, transcript LENGTH only)
+```
+With `WAKE_DIRECT_ACCEPT=false` (default) even a strong score needs the phrase check (the model fires on "Okay Jarvis" and "Yes Jarvis" too); `WAKE_STT_CONFIRM=false` removes the second stage (then only persistent scores count). If speech recognition is down, no wake happens (fail safe). The acknowledgement is only reachable through a `WakeEvent` (a test pins this); a fresh tray/API request is also a `WakeEvent` but expires after 5 s. Microphone opening, reconnecting, health checks, scheduler ticks, empty or unrelated transcripts cannot cause a "Yes?".
+
+**Debounce and echo.** After an activation `WAKE_DEBOUNCE_SECONDS` (1.5 s) ignore further wake audio; after JARVIS speaks anything `VOICE_POST_TTS_WAKE_BLOCK_SECONDS` (1 s) are ignored; a rejected candidate starts a 2 s STT cooldown. While JARVIS is speaking, barge-in by wake word needs a strong sustained score (echo-level scores are ignored). Wake detection resumes normally afterwards.
+
+**Session.** Wake -> "Yes?" -> conversation; follow-ups need no wake word until `VOICE_SESSION_TIMEOUT_SECONDS` (default 120) of inactivity, measured in **audio time since the last meaningful interaction** (it restarts when JARVIS finishes answering). Ambient noise, empty transcripts and low-confidence speech (below `stt_min_confidence`, unless it answers a pending yes/no) do not reset it. At the timeout the session ends silently (nothing is spoken) and the runtime is wake-only again. `session_state` (`asleep`/`active`), `sleep_reason` (`timeout`/`command`) and the last wake's metadata (source, score, threshold, phrase, STT confirmation, debounce) are on the voice status/dashboard; the voice log records `wake`, `wake_confirmed`, `wake_rejected`, `session_sleep`, `ambient_ignored`.
+
+**Sleep command.** "JARVIS sleep", "Hey JARVIS, sleep", "go to sleep", "sleep" (only those; "sleep well tonight" is a normal sentence) end the session at once: any speech is interrupted, a pending question is dropped, JARVIS says "Going to sleep.", the conversation context is closed, and nothing is sent to the language model or any tool. `VOICE_SLEEP_COMMAND_ENABLED=false` turns it off. "Hey JARVIS sleep" heard while already wake-only is ignored silently.
+
+**Male voice.** `TTS_MODEL_PATH=models/tts/en_US-ryan-medium.onnx`, `TTS_VOICE=en_US-ryan-medium` (Piper's official `ryan` male English voice, medium quality, 22.05 kHz). Install (project downloader, official piper-voices): `python -c "from pathlib import Path; from piper.download_voices import download_voice; download_voice('en_US-ryan-medium', Path('models/tts'))"`. The `tts` health line names the voice actually on disk (read from the model's own `.onnx.json` dataset) and reports `FAILED ... not found: download en_US-ryan-medium` if the file is missing; it never claims a voice that is not installed.
+
+**False-activation troubleshooting.** `logs/voice_log.jsonl` (`.jarvis/voice_log.jsonl`): a `wake` line carries `source` (`model`/`stt_confirmed`/`manual`), `score`, `threshold`, `state_before`, `stt_confirmation`; `wake_rejected` lines give the reason (`not a wake phrase`, `stale manual activation dropped`, `speech recognition unavailable`). Too many rejections: raise `WAKE_WORD_THRESHOLD`/`WAKE_CANDIDATE_FLOOR`; wake missed: lower them (the phrase check still protects against false activations). To change the timeout safely keep it at least 10 s (setting range 3-3600); very long timeouts keep JARVIS listening to a room for longer, and everything said in an open session is transcribed locally and sent to the language model.
+
+**Privacy.** Raw audio is never stored. The wake check keeps a rolling ~2.4 s in-memory ring for one local transcription; nothing before a validated wake is sent to Groq, and rejected transcripts are logged by length only.

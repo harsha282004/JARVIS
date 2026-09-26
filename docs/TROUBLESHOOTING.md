@@ -5,7 +5,7 @@ First look at the tray tooltip / dashboard (`http://127.0.0.1:8000/dashboard`, o
 | Symptom | Likely cause | What to do |
 |---|---|---|
 | Tray is 🔴 Offline right after start | voice runtime failed (model path, microphone) | read `last_error` in the tooltip/dashboard; fix `.env` paths; the supervisor retries with backoff (`JARVIS_RECOVERY_*`); or tray -> Restart JARVIS |
-| Tray is ⚠ Degraded | a service is bad but voice runs: see the Services table | e.g. `llm disconnected` -> start Ollama; `database degraded (no migrations applied)` -> `alembic -c database/alembic.ini upgrade head`; `gmail failed (needs you to sign in again)` -> `python scripts/gmail_cli.py auth` |
+| Tray is ⚠ Degraded | a service is bad but voice runs: see the Services table | e.g. `llm failed` / `llm disconnected` -> see `docs/LLM_PROVIDER.md` (Groq key, model, network), or start Ollama if `LLM_PROVIDER=ollama`; `database degraded (no migrations applied)` -> `alembic -c database/alembic.ini upgrade head`; `gmail failed (needs you to sign in again)` -> `python scripts/gmail_cli.py auth` |
 | Tray ⏸ Paused and "Microphone disabled" | PRIVATE/PAUSED mode (saved; survives restart) or you paused it | tray -> Private mode (uncheck) / Resume, or dashboard -> Privacy -> active |
 | Nothing happens when I say "Hey JARVIS" | wake word model missing, microphone busy/permission, paused | Services table (`wake_word`, `microphone`); Windows microphone privacy setting; tray -> Talk to JARVIS tests the rest of the pipeline |
 | "I couldn't check your calendar / email" | source unreachable, OAuth expired, or `JARVIS_OFFLINE_MODE=true` | this is deliberate honesty; fix the integration, it recovers on the next call |
@@ -23,3 +23,6 @@ Useful commands: `python -m desktop.launcher --stop`, `--startup-status`, `pytho
 `python scripts/e2e_launcher_check.py`.
 
 If a source is "unavailable" JARVIS will not guess what it contains. If an action was not confirmed by a read-back it is reported as unverified: check the calendar/task list yourself before asking again.
+
+## JARVIS says "Yes?" when nobody called it
+Read `.jarvis/voice_log.jsonl`: the `wake` line says where it came from (`source`, `score`, `stt_confirmation`). `wake_rejected` lines are candidates that were correctly refused. If a `wake` line has `source: manual`, it came from the tray/dashboard/API "Talk to JARVIS". The wake policy only accepts "Hey JARVIS" / "JARVIS" after a local speech check (see `docs/VOICE_ARCHITECTURE.md`); raise `WAKE_WORD_THRESHOLD` if candidates are frequent. JARVIS stays awake for `VOICE_SESSION_TIMEOUT_SECONDS` (120 s) after the last thing you said and then sleeps silently; say "JARVIS sleep" to end a conversation immediately.

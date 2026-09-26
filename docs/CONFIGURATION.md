@@ -110,3 +110,22 @@ Browser limits that also apply to tasks: `BROWSER_MAX_TABS`, `BROWSER_RETRIES`, 
 | `WORKFLOW_PROACTIVE_ENABLED` | `true` | proactive intelligence may start suggestion-only (read-only) workflows |
 
 State lives in `<state>/workflows/` (checkpoints, effect ledger, links, history, redacted audit log). The workflows use the existing integration switches and permissions (`JARVIS_GMAIL_ENABLED`, `JARVIS_CALENDAR_ENABLED`, the hub's per-integration enable/permission state, `JARVIS_MEMORY_ENABLED`, `AUTONOMY_*`/`BROWSER_*` for browser steps); they add no credentials of their own.
+
+# Microphone selection (device manager)
+
+`MICROPHONE_DEVICE` — empty or `auto`: the Windows default input, with the same physical microphone on other host APIs and other real microphones as fallbacks (virtual/stereo mixes, the sound mapper and output-only devices are never chosen automatically). A device **name** (case-insensitive, prefix/contains; stable across reboots — preferred) or a numeric sounddevice **index** (can change) selects explicitly; if it matches nothing JARVIS falls back to `auto`. `AUDIO_SAMPLE_RATE` (default 16000) is the pipeline rate; a device that cannot open at it is opened natively and resampled once. List devices: `python scripts/voice_real_check.py --devices`.
+
+# Wake policy, session and voice (strict wake update)
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `WAKE_WORD_THRESHOLD` | 0.5 | model score that makes a wake candidate |
+| `WAKE_DIRECT_THRESHOLD` / `WAKE_MIN_FRAMES` | 0.85 / 2 | a strong wake: this score on this many consecutive 80 ms frames |
+| `WAKE_DIRECT_ACCEPT` | `false` | false (strict): even a strong wake needs the exact phrase from a short local speech check; true accepts strong wakes directly |
+| `WAKE_STT_CONFIRM` | `true` | second-stage phrase check ("hey jarvis" / "jarvis" only) |
+| `WAKE_CANDIDATE_FLOOR` | 0.3 | weaker sustained scores (>= 2 frames) become phrase-checked candidates |
+| `WAKE_DEBOUNCE_SECONDS` | 1.5 | one wake event -> at most one activation |
+| `VOICE_POST_TTS_WAKE_BLOCK_SECONDS` | 1.0 | JARVIS's own voice cannot wake it |
+| `VOICE_SESSION_TIMEOUT_SECONDS` | 120 (3-3600) | inactivity that ends a conversation silently (old name `VOICE_CONVERSATION_TIMEOUT_SECONDS` still honoured) |
+| `VOICE_SLEEP_COMMAND_ENABLED` | `true` | "JARVIS sleep" ends the session at once, without the language model |
+| `TTS_MODEL_PATH` / `TTS_VOICE` | `models/tts/en_US-ryan-medium.onnx` / `en_US-ryan-medium` | the male Piper voice (must exist on disk; health reports it otherwise) |

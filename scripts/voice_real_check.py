@@ -49,10 +49,100 @@ def norm(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
 
 
+def wake_policy_check(settings, tts, wake, stt) -> None:
+    """The strict wake policy end to end with the REAL models: Piper (the configured voice) speaks each phrase, openWakeWord scores it, the gate decides, and the real
+    Faster-Whisper phrase check runs on candidates. Synthetic speech is not a human speaker; this shows which phrases can and cannot wake JARVIS. Nothing is stored."""
+    import time as _time
+
+    from voice.wake import WakeConfig, WakeGate, confirm_phrase
+
+    print("\nStrict wake policy (voice: " + Path(settings.TTS_MODEL_PATH).stem + "; exact phrases \"hey jarvis\" / \"jarvis\" only):")
+    cases = [("Hey Jarvis", True), ("Jarvis.", None), ("Okay Jarvis", False), ("Yes, Jarvis", False), ("Hey Travis", False), ("Hello there", False),
+             ("What is the weather like today", False), ("Turn on the service", False), ("Jarvis sleep", False)]
+    cfg = WakeConfig(direct_accept=False)
+    for phrase, should_wake in cases:
+        audio, rate = tts.synthesize(phrase)
+        stream = np.concatenate([np.zeros(RATE, dtype=np.float32), resample(audio, rate), np.zeros(RATE * 2, dtype=np.float32)])
+        wake.reset()
+        gate = WakeGate(cfg, _time.monotonic)
+        ring, peak, outcome = [], 0.0, "no candidate (not woken)"
+        for frame in frames_of(stream):
+            ring.append(to_int16(frame) if frame.dtype != np.int16 else frame)
+            wake.process(to_int16(frame) if frame.dtype != np.int16 else frame)
+            peak = max(peak, wake.last_score)
+            decision = gate.observe(wake.last_score, wake.threshold)
+            if decision.action != "none":
+                heard = stt.transcribe_detailed(np.concatenate(ring[-30:]), RATE)
+                ok, normalized, why = confirm_phrase(heard.text)
+                outcome = f"{'WAKES' if ok else 'rejected'} after STT check ({heard.text!r} -> {normalized or why})"
+                break
+        verdict = "" if should_wake is None else ("  OK" if (should_wake == outcome.startswith("WAKES")) else "  <-- unexpected")
+        print(f"  {phrase!r:34} peak score {peak:.2f}: {outcome}{verdict}")
+
+
+def microphone_diagnostic(settings, seconds: float, capture: bool) -> int:
+    """Device listing and (optionally) a real capture. PASS only if actual non-zero samples were received; the audio is discarded, never saved or sent."""
+    import numpy as np
+
+    from voice.audio import AudioInput
+    from voice.exceptions import AudioDeviceError
+    from voice.mic import MicrophoneDeviceManager, level_stats
+
+    print("Microphone diagnostic")
+    try:
+        manager = MicrophoneDeviceManager()
+        devices = manager.list_input_devices()
+        default = manager.get_default_input_device()
+    except Exception as exc:  # noqa: BLE001
+        print("FAIL: could not list audio devices:", exc)
+        return 1
+    print("\nInput devices (index, host API, channels, native rate):")
+    for d in devices:
+        print(f"  [{d.index:>2}] {d.name}  | {d.hostapi} | {d.max_input_channels} ch | {d.default_samplerate:.0f} Hz{'  <- Windows default' if d.is_default else ''}")
+    print("\nWindows default input:", default.name if default else "none")
+    mode, candidates = manager.candidates(settings.MICROPHONE_DEVICE)
+    print(f"MICROPHONE_DEVICE={settings.MICROPHONE_DEVICE!r} -> mode {mode}; order JARVIS will try:")
+    for d in candidates[:6]:
+        print(f"  [{d.index:>2}] {d.name} ({d.hostapi})")
+    if not capture:
+        return 0
+    mic = AudioInput(settings.AUDIO_SAMPLE_RATE, settings.MICROPHONE_DEVICE)
+    try:
+        mic.open()
+    except AudioDeviceError as exc:
+        print("\nFAIL: microphone could not be opened:", exc)
+        return 1
+    try:
+        print(f"\nSelected: {mic.selection.describe()}")
+        print(f"Capturing {seconds:.0f} s: please SPEAK now (audio is analysed in memory and discarded)...")
+        audio = np.concatenate(list(mic.frames(seconds)))
+    finally:
+        mic.close()
+    stats = level_stats(audio)
+    print(f"\nInput level (fraction of full scale): min={stats['min']:.6f} max={stats['max']:.6f} peak={stats['peak']:.6f} rms={stats['rms']:.6f}  (raw integer peak {stats['peak_int']})")
+    if stats["peak_int"] <= 4:
+        print("FAIL: the microphone opened but no usable signal was detected (all zeros or a noise floor of at most 4/32768). Nobody speaking, a muted/blocked microphone "
+              "(Windows privacy switch, hardware mute key) or a wrong device would all look like this: speak during the capture, check the device above, then retry.")
+        return 1
+    if stats["peak"] < 0.005:
+        print("WARN: samples were received but the level is extremely low (peak below 0.5 % of full scale). The device works, but either nobody spoke during the capture "
+              "or the input gain is very low (Windows Settings > Sound > Input > Properties > Levels).")
+        return 0
+    print("PASS: audio samples received from the microphone.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mic", action="store_true", help="sample one second of microphone level (discarded)")
+    ap.add_argument("--mic", action="store_true", help="capture a few seconds from the selected microphone and report its level (samples discarded, nothing stored)")
+    ap.add_argument("--devices", action="store_true", help="list input devices, the Windows default and the device JARVIS would select (opens nothing)")
+    ap.add_argument("--mic-only", action="store_true", help="run only the microphone diagnostic (skips the synthetic Piper/VAD/Whisper pipeline)")
+    ap.add_argument("--seconds", type=float, default=4.0, help="microphone capture length; speak during it for a meaningful level")
     args = ap.parse_args()
+    if args.mic_only or (args.devices and not args.mic):
+        from backend.core.config import get_settings
+
+        return microphone_diagnostic(get_settings(), args.seconds, args.mic or args.mic_only)
 
     from backend.core.config import get_settings
     from voice.stt.faster_whisper_provider import FasterWhisperProvider
@@ -107,20 +197,10 @@ def main() -> int:
     quiet = np.zeros(FRAME * 60, dtype=np.int16)
     wake.reset()
     print(f"Wake word on 4.8 s of silence: fired={any(wake.process(f) for f in frames_of(quiet))} (must be False)")
+    wake_policy_check(s, tts, wake, stt)
 
-    from voice.audio import list_input_devices
-
-    try:
-        devices = list_input_devices()
-        print("\nInput devices:", "; ".join(f"[{d['index']}] {d['name']}{' (default)' if d['default'] else ''}" for d in devices[:6]))
-    except Exception as exc:  # noqa: BLE001
-        print("\nInput devices could not be listed:", exc)
-    if args.mic:
-        from voice.audio import AudioInput
-
-        with AudioInput(RATE, s.MICROPHONE_DEVICE) as mic:
-            levels = [frame_level(mic.read_frame()) for _ in range(12)]
-        print(f"Microphone opened; level over ~1 s: min {min(levels):.4f} max {max(levels):.4f} (samples discarded, nothing stored)")
+    if args.mic or args.devices:
+        return microphone_diagnostic(s, args.seconds, args.mic)
     return 0
 
 

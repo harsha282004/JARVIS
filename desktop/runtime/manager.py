@@ -233,9 +233,9 @@ class RuntimeManager:
                 try:
                     engine.run_once(stop.is_set)
                 except LLMProviderError as exc:
-                    # Transient (e.g. Ollama not running): keep listening, but surface it.
+                    # Transient (e.g. the LLM provider is unreachable, rate limited or has a bad key): keep listening, but surface it.
                     with self._state_lock:
-                        self._last_error = f"LLM request failed: {exc}"
+                        self._last_error = f"LLM provider error [{getattr(exc, 'kind', 'unavailable')}]: {exc}"
                     logger.error("LLM request failed, continuing to listen: %s", exc)
         except Exception as exc:  # noqa: BLE001 - worker boundary: record, expose ERROR, re-log with traceback
             logger.exception("Voice worker crashed")

@@ -90,6 +90,20 @@ _ABOUT = re.compile(r"^(?:what about|tell me about|how about|what(?:'s| is) (?:t
 _ACK = re.compile(r"^(?:acknowledge|dismiss|clear|mark as read) (?:all )?(?:the |my |those |these )?notifications?$")
 
 
+_TIME_Q = re.compile(r"^(?:(?:hey )?jarvis )?(?:what(?:'s| is)? (?:the )?(?:current )?time(?: is it)?(?: (?:now|right now|please))?|what time is it(?: (?:now|right now))?|(?:tell me|give me) the time|do you (?:know|have) the time)$")
+_DATE_Q = re.compile(r"^(?:(?:hey )?jarvis )?(?:what(?:'s| is)? (?:the )?(?:date|day)(?: (?:is it|it is))?(?: today)?|what(?:'s| is) today(?:'s date)?|what day is (?:it|today)|what(?:'s| is) today's date)$")
+
+
+def _clock_answer(t: str, now, zone) -> str | None:
+    """Deterministic answer for "what time is it?" / "what's the date?" from the same clock and zone the rest of the assistant uses."""
+    if _TIME_Q.match(t):
+        return f"It's {now.astimezone(zone).strftime('%I:%M %p').lstrip('0')}."
+    if _DATE_Q.match(t):
+        local = now.astimezone(zone)
+        return f"Today is {local.strftime('%A, %B')} {local.day}, {local.year}."
+    return None
+
+
 class IntelligenceRouter:
     def __init__(self, service: IntelligenceService, hub_router=None, browser_router=None, autonomy_router=None, operator_router=None):
         self._svc = service
@@ -138,6 +152,10 @@ class IntelligenceRouter:
     def _route(self, t: str, original: str, session_id: str) -> IntelligenceReply | None:
         svc, now = self._svc, self._svc.now()
         zone = svc.zone
+
+        clock = _clock_answer(t, now, zone)
+        if clock is not None:  # the current time/date is read from the clock, never guessed by a language model
+            return IntelligenceReply(clock)
 
         pref = handle_preference(original, svc.prefs)
         if pref is not None:

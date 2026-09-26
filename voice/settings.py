@@ -39,14 +39,14 @@ class VoiceSettings:
     stt_model: str = "base"
     stt_language: str = "en"
     stt_min_confidence: float = 0.35       # below this a spoken "yes" cannot confirm a pending action
-    tts_voice: str = "en_US-lessac-medium"
+    tts_voice: str = "en_US-ryan-medium"
     tts_speed: float = 1.0                 # 1.0 normal, 1.25 faster
     tts_volume: float = 1.0
     silence_seconds: float = 1.0           # end of utterance after this much silence
     max_utterance_seconds: float = 15.0
     min_utterance_seconds: float = 0.15    # a one-word "Stop" is short; shorter blips are noise
     speech_threshold: float = 0.015        # RMS (0..1 of full scale) above the adaptive noise floor
-    conversation_timeout_seconds: float = 20.0  # follow-ups are heard without the wake word for this long
+    conversation_timeout_seconds: float = 120.0  # the voice SESSION timeout: follow-ups need no wake word until this much inactivity (audio time)
     spoken_max_chars: int = 320            # voice replies longer than this are summarised; full text stays on the dashboard
     voice_muted: bool = False              # JARVIS does not speak (tray); text still appears on the dashboard
     voice_notifications: bool = True
@@ -167,7 +167,9 @@ def defaults_from_config(config: Any) -> VoiceSettings:
     s.tts_volume = float(getattr(config, "VOICE_TTS_VOLUME", s.tts_volume))
     s.silence_seconds = float(getattr(config, "VOICE_SILENCE_SECONDS", s.silence_seconds))
     s.max_utterance_seconds = float(getattr(config, "VOICE_MAX_UTTERANCE_SECONDS", s.max_utterance_seconds))
-    s.conversation_timeout_seconds = float(getattr(config, "VOICE_CONVERSATION_TIMEOUT_SECONDS", s.conversation_timeout_seconds))
+    session = float(getattr(config, "VOICE_SESSION_TIMEOUT_SECONDS", s.conversation_timeout_seconds))
+    legacy = float(getattr(config, "VOICE_CONVERSATION_TIMEOUT_SECONDS", s.conversation_timeout_seconds))
+    s.conversation_timeout_seconds = session if session != 120.0 else legacy      # the old name still works when the new one is left at its default
     s.speech_threshold = float(getattr(config, "VOICE_SPEECH_THRESHOLD", s.speech_threshold))
     s.spoken_max_chars = int(getattr(config, "VOICE_SPOKEN_MAX_CHARS", s.spoken_max_chars))
     s.dnd_allow_critical = bool(getattr(config, "VOICE_DND_ALLOW_CRITICAL", True))

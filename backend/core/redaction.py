@@ -18,6 +18,7 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b1//[A-Za-z0-9_\-]{20,}"), REDACTED),  # Google refresh token
     (re.compile(r"\bAIza[A-Za-z0-9_\-]{30,}"), REDACTED),  # Google API key
     (re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"), REDACTED),  # generic "sk-" API keys
+    (re.compile(r"\bgsk_[A-Za-z0-9]{20,}"), REDACTED),  # Groq API keys
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"), REDACTED),  # GitHub tokens
     (re.compile(r"\b\d{6,12}:[A-Za-z0-9_\-]{30,}\b"), REDACTED),  # Telegram bot token
     # user:password@host in URLs

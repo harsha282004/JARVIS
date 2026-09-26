@@ -4,7 +4,7 @@
 Usage:
     python scripts/run_voice.py
 
-Requires Ollama running locally with the configured model pulled, plus the
+Requires the configured LLM provider (Groq with GROQ_API_KEY set, or a local Ollama with the model pulled), plus the
 wake-word and Piper voice model files referenced in `.env` — see
 docs/voice-system.md. Runs forever, cycling: wait for "Hey JARVIS" ->
 listen -> transcribe -> ask the LLM -> speak the reply -> wait again.

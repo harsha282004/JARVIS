@@ -96,6 +96,10 @@ class VoiceStatus:
         self.stt_ready: bool | None = None
         self.tts_ready: bool | None = None
         self.conversation_active = False
+        self.session_state = "asleep"          # asleep (wake-only) | active (a conversation is open)
+        self.sleep_reason: str | None = None    # timeout | command
+        self.last_wake: dict | None = None      # metadata of the last validated wake (source, score, threshold, phrase, STT confirmation): never audio
+        self.wake_rejections = 0                # wake candidates rejected by the phrase check
         self.pending_action: str | None = None   # a question JARVIS asked and is waiting for the user to answer
         self.last_transcription: str | None = None
         self.last_confidence: float | None = None
@@ -136,7 +140,8 @@ class VoiceStatus:
                               "false_activations": self.false_activations, "last_activation_at": self.last_activation_at},
                 "stt": {"ready": self.stt_ready, "last_confidence": self.last_confidence},
                 "tts": {"ready": self.tts_ready},
-                "conversation": {"active": self.conversation_active, "pending_action": self.pending_action},
+                "conversation": {"active": self.conversation_active, "pending_action": self.pending_action, "session": self.session_state, "sleep_reason": self.sleep_reason},
+                "last_wake": self.last_wake, "wake_rejections": self.wake_rejections,
                 "last_transcription": self.last_transcription, "last_response": self.last_response,
                 "last_error": self.last_error, "interruptions": self.interruptions,
                 "held_notifications": list(self.suppressed), "latency_ms": dict(self.latency), "degraded": list(self.degraded),

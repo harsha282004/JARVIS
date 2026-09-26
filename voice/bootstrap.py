@@ -71,10 +71,10 @@ from backend.core.database import SessionLocal
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.metered import MeteredLLM
-from backend.core.llm.ollama_provider import OllamaProvider
 from backend.core.logging import get_logger
 from backend.core.security import AuditLog, PermissionManager
 from voice.audio import AudioInput, AudioOutput
+from voice.wake import WakeConfig
 from voice.engine import VoiceEngine
 from voice.exceptions import ProviderNotConfiguredError
 from voice.stt.base import STTProvider
@@ -110,9 +110,12 @@ def _build_stt(settings: Settings) -> STTProvider:
 
 
 def _build_llm(settings: Settings) -> LLMProvider:
-    if settings.LLM_PROVIDER == "ollama":
-        return OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model=settings.LLM_MODEL)
-    raise ProviderNotConfiguredError(f"Unknown LLM_PROVIDER '{settings.LLM_PROVIDER}'")
+    from backend.core.llm.factory import UnknownProviderError, build_llm
+
+    try:
+        return build_llm(settings)
+    except UnknownProviderError as exc:
+        raise ProviderNotConfiguredError(str(exc)) from exc
 
 
 def _build_tts(settings: Settings) -> TTSProvider:
@@ -526,6 +529,9 @@ def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None
         policy=voice.policy if voice is not None else None,
         status=voice.status if voice is not None else None,
         log=voice.log if voice is not None else None,
+        wake=WakeConfig(debounce_seconds=settings.WAKE_DEBOUNCE_SECONDS, direct_threshold=settings.WAKE_DIRECT_THRESHOLD, direct_accept=settings.WAKE_DIRECT_ACCEPT, min_frames=settings.WAKE_MIN_FRAMES,
+                        candidate_floor=settings.WAKE_CANDIDATE_FLOOR, stt_confirm=settings.WAKE_STT_CONFIRM, post_tts_block_seconds=settings.VOICE_POST_TTS_WAKE_BLOCK_SECONDS,
+                        session_timeout_seconds=settings.VOICE_SESSION_TIMEOUT_SECONDS, sleep_command_enabled=settings.VOICE_SLEEP_COMMAND_ENABLED),
     )
     if voice is not None:
         voice.engine_interrupt = engine.interrupt

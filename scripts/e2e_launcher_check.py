@@ -169,9 +169,13 @@ def main() -> int:
     from backend.models.base import Base
     import backend.models.events, backend.models.knowledge_graph, backend.models.memory, backend.models.proactive, backend.models.rag, backend.models.tasks  # noqa: E401,F401
 
-    engine = create_engine(os.environ["DATABASE_URL"])
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    # The throw-away database is built by the REAL migrations (alembic upgrade head), exactly like a user's database, so the runtime's schema health check is honest:
+    # a create_all() database has no alembic_version and is (correctly) reported as "no migrations applied".
+    migrated = subprocess.run([sys.executable, "-m", "alembic", "-c", "database/alembic.ini", "upgrade", "head"], cwd=ROOT, env={**os.environ, "DATABASE_URL": os.environ["DATABASE_URL"]},
+                              capture_output=True, text=True, timeout=120)
+    if migrated.returncode != 0:
+        print(json.dumps({"checks": {"database_migrated": False}, "alembic_error": migrated.stderr[-500:]}, indent=2))
+        return 1
 
     env = {**os.environ, "DATABASE_URL": f"sqlite:///{db.as_posix()}", "JARVIS_STATE_DIR": str(work / "state"), "API_PORT": str(args.port),
            "JARVIS_PRIVACY_DEFAULT": args.privacy, "JARVIS_TRAY_ENABLED": "false" if args.no_tray else "true", "JARVIS_LOG_JSON": "true",
@@ -215,6 +219,7 @@ def main() -> int:
             health = json.loads(http(args.port, "/health/services", token))
             report["health"] = {s["name"]: f'{s["state"]} ({s["detail"]})' for s in health["services"]}
             report["overall"] = health["overall"]
+            report["checks"]["database_schema_current"] = report["health"].get("database", "").startswith("healthy") and "schema is current" in report["health"]["database"]
             report["metrics"] = json.loads(http(args.port, "/metrics", token))
             report["integrations"] = {i["name"]: f'{i["status"]} ({i["detail"]})' for i in json.loads(http(args.port, "/integrations", token))["integrations"]}
             report["intelligence_sources"] = json.loads(http(args.port, "/intelligence/summary", token)).get("sources")

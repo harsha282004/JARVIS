@@ -107,7 +107,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 # Text-to-speech
 TTS_PROVIDER=piper
 TTS_MODEL_PATH=                  # path to a Piper .onnx voice — required
-TTS_VOICE=en_US-lessac-medium
+TTS_VOICE=en_US-ryan-medium
 ```
 
 **Design note:** Phase 1 deliberately does not add a separate
@@ -175,14 +175,14 @@ Set `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `LLM_MODEL`
 ### 4. Text-to-speech voice (Piper)
 
 ```powershell
-python -c "from pathlib import Path; from piper.download_voices import download_voice; download_voice('en_US-lessac-medium', Path('models/tts'))"
+python -c "from pathlib import Path; from piper.download_voices import download_voice; download_voice('en_US-ryan-medium', Path('models/tts'))"
 ```
 
-Downloads `en_US-lessac-medium.onnx` and its `.onnx.json` config into
+Downloads `en_US-ryan-medium.onnx` (a male English voice; `en_US-lessac-medium` is the female alternative) and its `.onnx.json` config into
 `models/tts/`. Set in `.env`:
 
 ```
-TTS_MODEL_PATH=models/tts/en_US-lessac-medium.onnx
+TTS_MODEL_PATH=models/tts/en_US-ryan-medium.onnx
 ```
 
 Browse other voices at the Piper voices catalog if a different accent/

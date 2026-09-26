@@ -12,7 +12,12 @@ from backend.core.llm.messages import Message, Role
 
 
 class LLMProviderError(Exception):
-    """Raised when an LLM provider cannot fulfill a request."""
+    """Raised when an LLM provider cannot fulfill a request. `kind` classifies it (config, auth, network, timeout, rate_limit, model, bad_request, server, bad_response,
+    unavailable) so callers and health checks can tell an API-key problem from an outage without parsing text."""
+
+    def __init__(self, message: str = "", kind: str = "unavailable"):
+        super().__init__(message)
+        self.kind = kind
 
 
 class LLMProvider(ABC):

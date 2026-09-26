@@ -159,7 +159,7 @@ phase does and does not cover.
 |------------|------------|
 | Backend    | Python, FastAPI |
 | Agent      | Custom AgentBrain + Planner (implemented, no execution); LangGraph / LangChain not used |
-| LLM        | Ollama (local), provider-abstracted — implemented (`OllamaProvider`) |
+| LLM        | Groq (`openai/gpt-oss-20b`, OpenAI-compatible API) by default; Ollama as a local alternative; provider-abstracted — see `docs/LLM_PROVIDER.md` |
 | Database   | PostgreSQL, SQLAlchemy, Alembic |
 | Voice      | openWakeWord (wake word), Faster-Whisper (STT), Piper (TTS) — implemented |
 | Frontend   | Local dashboard: one static HTML page served by the launcher (`/dashboard`); React/Tailwind still planned |
@@ -205,14 +205,14 @@ Full instructions: [`docs/development.md`](docs/development.md).
 ## Voice setup
 
 The voice pipeline needs a wake-word model, a Piper TTS voice, and a
-running Ollama server before `python scripts/run_voice.py` will work —
+configured LLM (Groq: set `GROQ_API_KEY` in `.env`, see `docs/LLM_PROVIDER.md`) before `python scripts/run_voice.py` will work —
 full download commands and hardware notes are in
 [`docs/voice-system.md`](docs/voice-system.md). Quick version:
 
 ```powershell
 python -c "from openwakeword.utils import download_models; download_models(['hey_jarvis_v0.1'], target_directory='models/wakeword')"
-python -c "from pathlib import Path; from piper.download_voices import download_voice; download_voice('en_US-lessac-medium', Path('models/tts'))"
-ollama pull llama3
+python -c "from pathlib import Path; from piper.download_voices import download_voice; download_voice('en_US-ryan-medium', Path('models/tts'))"
+python scripts/llm_real_check.py      # verifies your Groq key and model (never prints the key)
 python scripts/run_voice.py
 ```
 

@@ -11,8 +11,7 @@ is implemented — it is not set up yet.
   infrastructure Phase 0 implements.
 - `backend/models/base.py` — the shared SQLAlchemy `Base` and a
   `TimestampMixin`. No domain models exist yet.
-- `database/migrations/` — Alembic migration environment, configured but
-  with no revisions yet (there is no schema to migrate to).
+- `database/migrations/` — the Alembic environment and revisions (`versions/0001`–`0007`: memory, RAG, knowledge graph, tasks/reminders, events, proactive notifications, hub items).
 - `database/alembic.ini` — Alembic configuration, reading `DATABASE_URL`
   from the application settings at runtime.
 
@@ -37,7 +36,7 @@ logs the underlying error.
 ## Tables
 
 - `personal_memories` (Phase 6): extracted personal memory notes. Migration
-  `0001_personal_memories`. Apply with `alembic -c database/alembic.ini upgrade head`.
+  `0001_personal_memories`. Apply with `alembic -c database/alembic.ini upgrade head` (run it from any directory: the ini uses `%(here)s`). Check with `alembic -c database/alembic.ini current` (must equal `heads`); the health check reports `schema is current` only then.
 
 - `rag_documents`, `rag_chunks` (Phase 7): personal RAG document metadata and chunk vectors
   (embeddings stored as float32 bytes; no PostgreSQL extension needed). Migration `0002_rag_tables`.

@@ -36,12 +36,21 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(...)
 
     # --- LLM provider ---
-    LLM_PROVIDER: str = "ollama"
+    LLM_PROVIDER: str = "groq"  # groq | ollama
     # Model name for whichever LLM_PROVIDER is active (e.g. an Ollama model
     # tag such as "llama3"). Phase 1 intentionally does not add a separate
     # OLLAMA_MODEL field — LLM_MODEL is the single source of truth so the
     # provider abstraction stays provider-agnostic.
-    LLM_MODEL: str = "llama3"
+    LLM_MODEL: str = "openai/gpt-oss-20b"
+    # Groq (OpenAI-compatible API). The key lives only in .env / the environment; SecretStr keeps it out of reprs and logs.
+    GROQ_API_KEY: SecretStr = SecretStr("")
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_REASONING_EFFORT: str = "low"                 # gpt-oss models only: low keeps a spoken assistant fast
+    LLM_TEMPERATURE: float = Field(default=0.3, ge=0, le=2)
+    LLM_MAX_TOKENS: int = Field(default=2048, ge=16, le=32768)
+    LLM_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=300)
+    LLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    # Local alternative provider (LLM_PROVIDER=ollama); nothing else requires it.
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     # --- Voice: wake word ---
@@ -53,7 +62,7 @@ class Settings(BaseSettings):
     WAKE_WORD_THRESHOLD: float = 0.5
 
     # --- Voice: audio I/O ---
-    # Empty string = system default input/output device.
+    # Empty string or "auto" = the Windows default input device (see voice/mic.py); a device name or index selects one explicitly.
     MICROPHONE_DEVICE: str = ""
     AUDIO_SAMPLE_RATE: int = 16000
     # Fixed capture window for a single utterance after wake-word activation.
@@ -71,7 +80,7 @@ class Settings(BaseSettings):
     # Path to a downloaded Piper voice model (.onnx). No default: must be
     # set explicitly before the TTS provider can start.
     TTS_MODEL_PATH: str = ""
-    TTS_VOICE: str = "en_US-lessac-medium"
+    TTS_VOICE: str = "en_US-ryan-medium"   # a male English Piper voice (the model file must exist at TTS_MODEL_PATH)
 
     # --- Voice: natural conversation (Phase 19). Defaults for the persisted voice settings (.jarvis/voice_settings.json wins once
     # the user changes something from the tray or dashboard). ---
@@ -81,7 +90,21 @@ class Settings(BaseSettings):
     VOICE_MAX_UTTERANCE_SECONDS: float = Field(default=15.0, ge=2.0, le=60.0)
     VOICE_SPEECH_THRESHOLD: float = Field(default=0.015, ge=0.001, le=0.5)
     # After the wake word, follow-ups need no wake word until this much silence.
-    VOICE_CONVERSATION_TIMEOUT_SECONDS: float = Field(default=20.0, ge=3.0, le=600.0)
+    # Voice SESSION: after a wake phrase the conversation continues without the wake word until this much inactivity (audio time; ambient noise, empty or
+    # low-confidence speech do not reset it), then JARVIS goes back to wake-only mode silently. VOICE_CONVERSATION_TIMEOUT_SECONDS is the old name (still honoured
+    # when the new one is left at its default).
+    VOICE_SESSION_TIMEOUT_SECONDS: float = Field(default=120.0, ge=3.0, le=3600.0)
+    VOICE_CONVERSATION_TIMEOUT_SECONDS: float = Field(default=120.0, ge=3.0, le=600.0)
+    VOICE_SLEEP_COMMAND_ENABLED: bool = True                                   # "JARVIS sleep" ends the session immediately (no LLM, no tools)
+    # Wake policy (supported phrases: "Hey JARVIS" and "JARVIS" only). WAKE_WORD_THRESHOLD is the model score that makes a wake CANDIDATE; a candidate must be confirmed by
+    # a short local speech check saying exactly one of the phrases. Scores >= WAKE_DIRECT_THRESHOLD for WAKE_MIN_FRAMES consecutive 80 ms frames are accepted directly.
+    WAKE_DEBOUNCE_SECONDS: float = Field(default=1.5, ge=0.0, le=10.0)         # one wake event -> at most one activation
+    WAKE_DIRECT_THRESHOLD: float = Field(default=0.85, ge=0.3, le=1.0)
+    WAKE_DIRECT_ACCEPT: bool = False                                           # False (strict): even a strong score needs the exact phrase from the speech check
+    WAKE_CANDIDATE_FLOOR: float = Field(default=0.3, ge=0.05, le=0.9)
+    WAKE_MIN_FRAMES: int = Field(default=2, ge=1, le=10)
+    WAKE_STT_CONFIRM: bool = True
+    VOICE_POST_TTS_WAKE_BLOCK_SECONDS: float = Field(default=1.0, ge=0.0, le=5.0)  # JARVIS's own voice cannot wake it
     VOICE_TTS_SPEED: float = Field(default=1.0, ge=0.5, le=2.0)
     VOICE_TTS_VOLUME: float = Field(default=1.0, ge=0.0, le=1.0)
     # Spoken answers longer than this are shortened for the ear; the full text stays on the dashboard.

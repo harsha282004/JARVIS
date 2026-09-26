@@ -51,9 +51,19 @@ def test_unknown_tts_provider_raises():
         _build_tts(settings)
 
 
-def test_ollama_provider_selected_for_default_settings():
+def test_groq_provider_selected_for_default_settings():
+    from backend.core.llm.groq_provider import GroqProvider
+
+    provider = _build_llm(_settings())
+    assert isinstance(provider, GroqProvider) and provider.model == "openai/gpt-oss-20b"
+
+
+def test_ollama_provider_is_still_selectable():
     from backend.core.llm.ollama_provider import OllamaProvider
 
-    settings = _settings()
-    provider = _build_llm(settings)
-    assert isinstance(provider, OllamaProvider)
+    assert isinstance(_build_llm(_settings(LLM_PROVIDER="ollama", LLM_MODEL="llama3")), OllamaProvider)
+
+
+def test_unknown_llm_provider_is_a_provider_configuration_error():
+    with pytest.raises(ProviderNotConfiguredError, match="Unknown LLM_PROVIDER"):
+        _build_llm(_settings(LLM_PROVIDER="mystery"))

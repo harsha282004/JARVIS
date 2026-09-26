@@ -43,6 +43,7 @@ from voice.status import TTS, Mic, VoiceLog, VoiceStatus, new_session_id
 from voice.stt.base import STTProvider, Transcription
 from voice.tts.base import TTSProvider
 from voice.vad import EnergyVAD, UtteranceDetector, UtteranceStatus, frame_level
+from voice.wake import WakeConfig, WakeEvent, WakeGate, confirm_phrase, is_sleep_command
 from voice.wakeword.base import WakeWordProvider
 
 logger = get_logger(__name__)
@@ -56,6 +57,7 @@ ACK_STOPPED = "Okay."
 ACK_CANCELLED = "Okay, cancelled."
 ACK_WAIT = "Sure, take your time."
 ACK_TASK_STOPPED = "Okay, I stopped the task."
+ACK_SLEEP = "Going to sleep."
 _REPEAT = re.compile(r"^(?:jarvis[, ]+)?(?:please )?(?:repeat that|say that again|what did you say|say it again|come again|repeat)(?: please)?[.?!]*$", re.I)
 _YES_NO_ONLY = re.compile(r"^(?:yes|yeah|yep|yup|sure|ok|okay|no|nope|nah|confirm|do it|go ahead)[.!]*$", re.I)
 
@@ -92,6 +94,8 @@ class VoiceEngine:
         mic_retry_seconds: float = 2.0,
         barge_in_grace_seconds: float = 0.3,
         sleep: Callable[[float], None] = time.sleep,
+        wake: WakeConfig | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self._wakeword = wakeword
         self._stt = stt
@@ -117,7 +121,14 @@ class VoiceEngine:
         self._session_id = new_session_id()
         self._last_response: str | None = None
         self._manual_activation = False
-        self._wake_block_until = 0.0
+        self._clock = clock
+        self._wake_cfg = wake or WakeConfig()
+        self._gate = WakeGate(self._wake_cfg, clock)
+        self._ring: list[np.ndarray] = []
+        self._last_wake: WakeEvent | None = None
+        self._manual_wake_at = 0.0
+        self._idle_audio = 0.0
+        self._last_capture_seconds = 0.0
         self._vad = EnergyVAD(self._settings().speech_threshold)
         self.status.update(wake_ready=self._safe_ready(wakeword), stt_ready=self._safe_ready(stt), tts_ready=self._safe_ready(tts),
                            wake_health="ready" if self._safe_ready(wakeword) else "not_ready")
@@ -152,11 +163,22 @@ class VoiceEngine:
         except Exception:  # noqa: BLE001
             return False
 
+    @property
+    def _wake_block_until(self) -> float:
+        """End of the current refractory window (debounce, post-speech, post-rejection). One mechanism for every wake source."""
+        return self._gate._blocked_until
+
+    @_wake_block_until.setter
+    def _wake_block_until(self, value: float) -> None:
+        self._gate._blocked_until = value
+
     # ---- external control (tray / dashboard / API; any thread) ---------------------------------------------------------------
 
     def request_activation(self) -> None:
         """"Talk to JARVIS" from the tray: behaves like hearing the wake word, on the next audio frame. It does nothing while
-        the runtime is paused or private (the engine is not listening then), so it can never open a closed microphone."""
+        the runtime is paused or private (the engine is not listening then), so it can never open a closed microphone. The request expires
+        (WakeConfig.manual_ttl_seconds): one that nobody consumed is dropped, never replayed later as a surprise "Yes?"."""
+        self._manual_wake_at = self._clock()
         self._manual_wake.set()
 
     def interrupt(self) -> None:
@@ -250,6 +272,7 @@ class VoiceEngine:
             return False
         finally:
             self._interrupt.clear() if interrupted else None
+            self._gate.block(self._wake_cfg.post_tts_block_seconds)     # JARVIS's own voice in the microphone must never wake JARVIS
         self.status.update(tts=TTS.INTERRUPTED if interrupted else TTS.IDLE)
         if interrupted:
             self.status.update(interruptions=self.status.interruptions + 1)
@@ -280,7 +303,7 @@ class VoiceEngine:
                     continue
                 if time.monotonic() - began < self._grace:  # the first instant of playback is our own voice in the microphone
                     continue
-                heard = self._wakeword.process(frame)
+                heard = self._strong_wake(frame)
                 if mode == "vad":
                     loud = loud + 1 if frame_level(frame) >= self._settings().barge_in_threshold else 0
                     heard = heard or loud >= 3
@@ -293,14 +316,32 @@ class VoiceEngine:
                 out.stop()
         return False
 
+    def _score(self) -> float | None:
+        score = getattr(self._wakeword, "last_score", None)
+        return float(score) if isinstance(score, (int, float)) and not isinstance(score, bool) else None
+
+    def _strong_wake(self, frame: np.ndarray) -> bool:
+        """The wake word while JARVIS is talking (barge-in): only a strong, sustained score interrupts, so the speaker's own echo cannot."""
+        heard = self._wakeword.process(frame)
+        score = self._score()
+        if score is None:
+            return bool(heard)
+        if score >= self._wake_cfg.direct_threshold:
+            self._bargein_run = getattr(self, "_bargein_run", 0) + 1
+        else:
+            self._bargein_run = 0
+        return self._bargein_run >= max(1, self._wake_cfg.min_frames)
+
     # ---- listening ---------------------------------------------------------------------------------------------------------
 
     def _capture(self, no_speech_seconds: float, should_stop: Callable[[], bool] | None = None) -> tuple[np.ndarray, str, float | None]:
         """Record one utterance. Returns (audio, status, seconds until speech began).
         With VAD the utterance ends after `silence_seconds` of quiet; without it, a fixed window (the original behavior)."""
+        self._last_capture_seconds = 0.0
         if not self._use_vad:
             frames = list(self._audio_input.frames(self._listen_seconds))
             audio = np.concatenate(frames) if frames else np.array([], dtype=np.int16)
+            self._last_capture_seconds = max(len(audio) / self._sample_rate, self._listen_seconds)
             return audio, UtteranceStatus.COMPLETE.value, None
         s = self._settings()
         detector = UtteranceDetector(self._vad, self._sample_rate, s.silence_seconds, s.max_utterance_seconds, s.min_utterance_seconds, no_speech_seconds)
@@ -309,6 +350,7 @@ class VoiceEngine:
                 return np.array([], dtype=np.int16), "stopped", None  # shutting down: what was heard so far is dropped, not acted on
             detector.push(self._audio_input.read_frame())
         result = detector.result()
+        self._last_capture_seconds = result.total_seconds
         if result.speech_started_after is not None:
             self.status.set_latency("speech_detection_ms", result.speech_started_after * 1000)
         return result.audio, result.status.value, result.speech_started_after
@@ -415,7 +457,12 @@ class VoiceEngine:
                 self._announcements.set_accepting(False)
 
     def _wait_for_wake(self, stack: ExitStack, should_stop: Callable[[], bool] | None) -> bool:
-        """True when activated (wake word or tray), False when asked to stop."""
+        """True when a VALIDATED wake happened (recorded in self._last_wake), False when asked to stop. Only three things activate JARVIS: the wake-word model with a
+        sustained strong score, a weaker candidate whose short STT check is exactly "hey jarvis"/"jarvis", or a fresh tray/API request. Nothing else (noise, other
+        speech, the microphone opening or reconnecting, empty transcripts, scheduler ticks) can lead to the acknowledgement."""
+        self._last_wake = None
+        self._ring = []
+        ring_max = max(3, int(self._wake_cfg.confirm_window_seconds * self._sample_rate / 1280))
         while True:
             if should_stop is not None and should_stop():
                 return False
@@ -428,18 +475,84 @@ class VoiceEngine:
                 self.status.update(last_error="Microphone disconnected")
                 if not self._acquire_mic(stack, should_stop):
                     return False
+                self._ring = []                                      # a reconnect is not a wake: start clean (only a validated wake ever speaks)
                 continue
+            self._ring.append(frame)
+            del self._ring[:-ring_max]
             if self._manual_wake.is_set():
                 self._manual_wake.clear()
+                age = self._clock() - self._manual_wake_at
+                if age > self._wake_cfg.manual_ttl_seconds:
+                    logger.info("STALE_MANUAL_ACTIVATION_DROPPED age_s=%.1f", age)
+                    self._log.event("wake_rejected", session_id=self._session_id, state="waiting", result="stale manual activation dropped", age_s=round(age, 1))
+                    continue
                 self._manual_activation = True
                 logger.info("MANUAL_ACTIVATION")
+                self._last_wake = WakeEvent("manual", None, self._wakeword_threshold(), "manual", "waiting", False, 0.0)
                 return True
-            if time.monotonic() < self._wake_block_until:
-                continue  # refractory: the tail of the last utterance must not re-trigger the wake word
-            if self._wakeword.process(frame):
+            if self._gate.blocked():
+                continue  # refractory: debounce, the tail of the last utterance, JARVIS's own voice
+            heard = self._wakeword.process(frame)
+            score = self._score()
+            if score is None:                                        # a provider without scores (tests/other engines): its own decision, still debounced above
+                if heard:
+                    self._manual_activation = False
+                    logger.info("WAKE_WORD_DETECTED")
+                    self._last_wake = WakeEvent("legacy_model", None, self._wakeword_threshold(), "hey jarvis", "waiting", False, 0.0)
+                    return True
+                continue
+            decision = self._gate.observe(score, self._wakeword_threshold())
+            if decision.action == "accept":
                 self._manual_activation = False
-                logger.info("WAKE_WORD_DETECTED")
+                logger.info("WAKE_WORD_DETECTED score=%.2f", score)
+                self._last_wake = WakeEvent(decision.source, score, self._wakeword_threshold(), "hey jarvis", "waiting", False, 0.0)
                 return True
+            if decision.action == "candidate":
+                event = self._confirm_wake(decision.score, decision.strong)
+                if event is not None:
+                    self._manual_activation = False
+                    self._last_wake = event
+                    return True
+
+    def _wakeword_threshold(self) -> float:
+        value = getattr(self._wakeword, "threshold", None)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else float(self._settings().wake_sensitivity)
+
+    def _confirm_wake(self, score: float, strong: bool = False) -> WakeEvent | None:
+        """Second stage for a candidate: a short local STT check of the last ~2 s (plus a short tail) that must be EXACTLY "hey jarvis" or "jarvis". The audio stays in memory
+        for this call only; nothing is stored or sent, and a rejected transcript is logged by length only."""
+        tail = max(0, int((self._wake_cfg.strong_tail_seconds if strong else self._wake_cfg.confirm_tail_seconds) * self._sample_rate / 1280))
+        for _ in range(tail):
+            try:
+                self._ring.append(self._audio_input.read_frame())
+            except AudioDeviceError:
+                break
+        audio = np.concatenate(self._ring) if self._ring else np.array([], dtype=np.int16)
+        self._ring = []
+        reset = getattr(self._wakeword, "reset", None)
+        if callable(reset):
+            reset()
+        started = time.perf_counter()
+        ok, phrase, why = False, "", "speech recognition unavailable"
+        if audio.size and self._safe_ready(self._stt):
+            try:
+                result = self._stt.transcribe_detailed(audio, self._sample_rate) if hasattr(self._stt, "transcribe_detailed") else Transcription(
+                    self._stt.transcribe(audio, self._sample_rate))
+                ok, phrase, why = confirm_phrase(result.text)
+                length = len(result.text)
+            except Exception as exc:  # noqa: BLE001 - a failed check is a rejection, never an activation
+                why, length = f"speech recognition failed ({type(exc).__name__})", 0
+        else:
+            length = 0
+        elapsed = (time.perf_counter() - started) * 1000
+        if ok:
+            self._log.event("wake_confirmed", session_id=self._session_id, state="waiting", result=phrase, latency_ms=elapsed, score=round(score, 2), stt_confirmation=True)
+            return WakeEvent("stt_confirmed", score, self._wakeword_threshold(), phrase, "waiting", True, 0.0)
+        self._gate.note_rejection()
+        self.status.update(wake_rejections=self.status.wake_rejections + 1)
+        logger.info("WAKE_CANDIDATE_REJECTED score=%.2f reason=%s", score, why)
+        self._log.event("wake_rejected", session_id=self._session_id, state="waiting", result=why, latency_ms=elapsed, score=round(score, 2), transcript_chars=length, stt_confirmation=True)
+        return None
 
     def _run_once(self, should_stop: Callable[[], bool] | None) -> str | None:
         logger.info("VOICE_ENGINE_STARTED state=%s", self.state)
@@ -457,8 +570,17 @@ class VoiceEngine:
             reset = getattr(self._wakeword, "reset", None)
             if callable(reset):
                 reset()
-            self.status.update(activations=self.status.activations + 1, last_activation_at=_utc_iso())
-            self._log.event("wake", session_id=self._session_id, state="listening")
+            wake = self._last_wake
+            if wake is None:                                          # cannot happen; if it ever did, nothing may be spoken
+                logger.error("ACTIVATION_WITHOUT_VALIDATED_WAKE ignored")
+                return None
+            self._gate.note_activation()
+            self._idle_audio = 0.0
+            self.status.update(activations=self.status.activations + 1, last_activation_at=_utc_iso(), session_state="active", sleep_reason=None,
+                               last_wake={"source": wake.source, "score": None if wake.score is None else round(wake.score, 2), "threshold": round(wake.threshold, 2), "phrase": wake.phrase,
+                                          "stt_confirmed": wake.stt_confirmed, "at": _utc_iso()})
+            self._log.event("wake", session_id=self._session_id, state="listening", result=wake.phrase, source=wake.source, score=None if wake.score is None else round(wake.score, 2),
+                            threshold=round(wake.threshold, 2), state_before=wake.state_before, stt_confirmation=wake.stt_confirmed, debounce_s=self._wake_cfg.debounce_seconds)
             self._set_state(VoiceState.LISTENING)
             logger.info("LISTENING_STARTED duration_s=%s", self._listen_seconds)
             self._interrupt.clear()
@@ -477,49 +599,93 @@ class VoiceEngine:
                 stack.close()  # already reported as unavailable; keep that status until the next activation reacquires it
             else:
                 self._release_mic(stack, lost=False)
-            self._wake_block_until = time.monotonic() + 1.0
+            self._wake_block_until = max(self._wake_block_until, self._clock() + max(1.0, self._wake_cfg.debounce_seconds))
+            if self.status.session_state == "active":
+                self.status.update(session_state="asleep")
             self.status.update(conversation_active=False, pending_action=None)
             self._set_state(VoiceState.WAITING)
         logger.info("VOICE_ENGINE_STOPPED state=%s", self.state)
         return response
 
+    def _sleep_session(self, reason: str) -> None:
+        """End the active conversation: no further follow-up listening until the next wake phrase. Nothing is sent to the language model or any tool."""
+        self.status.update(session_state="asleep", sleep_reason=reason, conversation_active=False, pending_action=None)
+        self._log.event("session_sleep", session_id=self._session_id, state="listening", result=reason)
+        logger.info("VOICE_SESSION_SLEEP reason=%s", reason)
+        if reason == "command":                                      # an explicit "sleep" also closes the conversation context; a timeout leaves it to expire on its own clock
+            try:
+                self._conversation.reset()
+            except Exception:  # noqa: BLE001 - closing the conversation context is best effort
+                pass
+
     def _converse(self, stack: ExitStack, should_stop: Callable[[], bool] | None) -> str | None:
+        """One wake-to-sleep conversation. The follow-up window is the session timeout (default 120 s): it is measured in AUDIO time since the last meaningful interaction,
+        and only a validated utterance (speech that transcribes to real text with acceptable confidence) resets it: ambient noise, empty transcripts and low-confidence
+        speech do not. When it runs out the session ends silently (nothing is spoken because of a timeout)."""
         s = self._settings()
+        timeout = s.conversation_timeout_seconds                     # the session timeout (VOICE_SESSION_TIMEOUT_SECONDS, default 120 s; adjustable live)
         response: str | None = None
         first = True
         misses = 0
-        no_speech = 8.0
-        utterance, status, _ = self._capture(no_speech, should_stop)
+        self._idle_audio = 0.0
+        utterance, status, _ = self._capture(8.0, should_stop)
         while True:
             if status == "stopped":
                 break
-            if status in (UtteranceStatus.NO_SPEECH.value, UtteranceStatus.TOO_SHORT.value) or utterance.size == 0:
+            self._idle_audio += max(self._last_capture_seconds, 0.5)      # time always advances: a capture that reports nothing can never loop forever
+            silent = status in (UtteranceStatus.NO_SPEECH.value, UtteranceStatus.TOO_SHORT.value) or utterance.size == 0
+            if silent:
                 if first:
                     self._note_false_activation()
-                logger.info("No speech captured (%s); ending this activation", status)
-                break
+                    logger.info("No speech captured (%s); ending this activation", status)
+                    break
+                if status == UtteranceStatus.NO_SPEECH.value or self._idle_audio >= timeout:
+                    self._sleep_session("timeout")
+                    break
+                utterance, status, _ = self._capture(max(1.0, timeout - self._idle_audio), should_stop)   # a noise blip: the timer keeps running
+                continue
             heard = self._transcribe(utterance)
             if heard is None:  # recognizer failed: tell the user, keep the dashboard path
                 self._speak(STT_UNAVAILABLE, kind="prompt", monitor=False)
                 break
-            if not heard.text:
+            awaiting = self._conversation.awaiting_answer() if hasattr(self._conversation, "awaiting_answer") else None
+            low_confidence = (not first and heard.confidence is not None and heard.confidence < s.stt_min_confidence and control_of(heard.text) is Control.NONE
+                              and not is_sleep_command(heard.text) and awaiting != "confirmation")   # a doubtful yes/no is handled by the confirmation guard, not dropped
+            if not heard.text or low_confidence:
                 if first:
                     self._note_false_activation()
-                logger.info("No speech recognized; ending this activation")
-                break
+                    logger.info("No speech recognized; ending this activation")
+                    break
+                self._log.event("ambient_ignored", session_id=self._session_id, state="listening", result="empty or low-confidence speech did not reset the session timer")
+                if self._idle_audio >= timeout:
+                    self._sleep_session("timeout")
+                    break
+                utterance, status, _ = self._capture(max(1.0, timeout - self._idle_audio), should_stop)
+                continue
             first = False
+            self._idle_audio = 0.0                                    # a validated interaction restarts the inactivity timer
             self.status.update(last_transcription=heard.text, conversation_active=True)
             text = heard.text
+            if self._wake_cfg.sleep_command_enabled and is_sleep_command(text):
+                self._interrupt.clear()
+                self.interrupt()
+                cancel = getattr(self._conversation, "cancel_pending", None)
+                if callable(cancel):
+                    cancel()
+                self._interrupt.clear()
+                self._speak(ACK_SLEEP, kind="prompt", monitor=False)
+                self._sleep_session("command")
+                break
             verdict = self._handle_control(text)
             if verdict == "end":
                 break
             if verdict in ("listen", "wait"):
                 self._interrupt.clear()
-                utterance, status, _ = self._capture(15.0 if verdict == "wait" else self._settings().conversation_timeout_seconds, should_stop)
+                utterance, status, _ = self._capture(15.0 if verdict == "wait" else timeout, should_stop)
                 continue
             clean = normalize(text)
             if not clean.text:
-                utterance, status, _ = self._capture(s.conversation_timeout_seconds, should_stop)
+                utterance, status, _ = self._capture(timeout, should_stop)
                 misses += 1
                 if misses > 2:
                     break
@@ -532,7 +698,7 @@ class VoiceEngine:
                 if guard is not None:
                     self._speak(guard, kind="prompt", monitor=False)
                     self._interrupt.clear()
-                    utterance, status, _ = self._capture(s.conversation_timeout_seconds, should_stop)
+                    utterance, status, _ = self._capture(timeout, should_stop)
                     continue
                 turn_started = time.perf_counter()
                 try:
@@ -555,8 +721,9 @@ class VoiceEngine:
                 break
             # Active conversation: listen for a follow-up without the wake word until the inactivity timeout.
             self._set_state(VoiceState.LISTENING)
-            logger.info("LISTENING_STARTED follow_up=true duration_s=%s", self._listen_seconds)
-            utterance, status, _ = self._capture(s.conversation_timeout_seconds, should_stop)
+            self._idle_audio = 0.0                                    # the timer starts when JARVIS has finished answering
+            logger.info("LISTENING_STARTED follow_up=true timeout_s=%s", timeout)
+            utterance, status, _ = self._capture(timeout, should_stop)
         return response
 
     def _handle_control(self, text: str) -> str | None:

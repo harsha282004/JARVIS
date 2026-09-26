@@ -421,3 +421,21 @@ def workflow_resume(workflow_id: str, ctx: AppContext = Depends(authorized)) -> 
 def workflow_confirm(workflow_id: str, body: WorkflowConfirm, ctx: AppContext = Depends(authorized)) -> dict:
     _workflow(ctx, workflow_id)
     return {"message": _operator(ctx).confirm(workflow_id, body.approve).text}
+
+
+# ---- language model provider health ----------------------------------------------------------------------------------------------------------
+# Staged health only: provider, model, configured / key present / reachable / authenticated / model available / inference. Never the key, headers or response bodies.
+
+
+@router.get("/llm", dependencies=[Depends(check_host)])
+def llm_health(probe: bool = False, ctx: AppContext = Depends(authorized)) -> dict:
+    """`?probe=true` also runs one tiny real chat request (costs a few tokens); the default does not."""
+    from backend.core.llm.factory import UnknownProviderError, build_llm
+
+    try:
+        provider = build_llm(ctx.settings)
+    except UnknownProviderError as exc:
+        return {"provider": ctx.settings.LLM_PROVIDER, "model": ctx.settings.LLM_MODEL, "provider_configured": False, "problem": "config", "detail": str(exc)}
+    if not hasattr(provider, "health"):
+        return {"provider": ctx.settings.LLM_PROVIDER, "model": ctx.settings.LLM_MODEL, "provider_configured": True, "detail": "this provider has no staged health check"}
+    return provider.health(inference=probe).to_dict()

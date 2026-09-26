@@ -147,3 +147,42 @@ Changed: `integrations/github/adapter.py` (`identity()`), `agent/intelligence/ro
 ### Not done / deferred
 
 See `PHASE_22_IMPLEMENTATION.md` §Known limitations.
+
+
+---
+
+# Microphone capture fix (Windows)
+
+**Root cause (measured on this machine).** The microphone was not dead: `AudioInput` opened the Windows default (MME "Microphone Array") at 16 kHz mono and delivered real samples, but (1) `voice_real_check.py --mic` printed levels to four decimals, and a quiet room is ~0.00002 of full scale, so it showed `min 0.0000 max 0.0000` as if the device were silent; (2) device selection was a bare default/index with no validation, no fallback between the four Windows host APIs (DirectSound endpoint [5] delivers exact zeros on this laptop while MME/WASAPI deliver samples; WASAPI rejects 16 kHz; WDM-KS rejects the blocking API), no zero-signal detection and no diagnostics. A subsequent capture during real ambient sound gave a raw peak of 511 with PASS.
+
+**Changed.** New `voice/mic.py` (`MicrophoneDeviceManager`, `MicSelection`, `to_pipeline`, `level_stats`); `voice/audio.py` (`AudioInput` uses it: candidates, native-format fallback with one resample, zero-signal skip, metadata-only log line, `selection`; `list_input_devices()` returns host API/channels/rate); `scripts/voice_real_check.py` (`--devices`, `--mic-only`, `--seconds`, PASS only on real samples, FAIL on zeros/≤4 LSB noise floor, raw integer peak shown); `backend/core/config.py` and `.env.example` (`MICROPHONE_DEVICE` accepts `auto`, names, indexes); docs. Existing public API of `AudioInput`, the engine and Phase 19 behaviour are unchanged.
+
+**Tests added.** `tests/voice/test_microphone_device.py` (21): discovery (default, none, output-only, duplicate names, virtual devices), configuration modes and invalid values, format/channel fallback with resampling, backend failure fall-through, zero/near-zero/real signal, disconnect/reconnect re-resolution, privacy (metadata-only log, nothing written, no network/file APIs).
+
+**Limitations.** A human voice through the real microphone into wake word/STT/TTS could not be exercised by the automated run (no speaker was present); the physical-microphone evidence is device enumeration, real sample capture and the real launcher's manual activation path. WDM-KS endpoints are not used (PortAudio callback-only). No software gain is applied: a very low input level must be fixed in Windows (the diagnostic says so).
+
+
+---
+
+# LLM provider: Groq replaces Ollama as the default
+
+New: `backend/core/llm/{groq_provider,factory}.py`, `tests/llm/test_groq_provider.py`, `scripts/llm_real_check.py`, `docs/LLM_PROVIDER.md`. Changed: `LLMProviderError.kind`; `backend/core/config.py` (`LLM_PROVIDER=groq`, `LLM_MODEL=openai/gpt-oss-20b`, `GROQ_*`, `LLM_*` limits); `.env.example`; local `.env` (non-secret LLM lines only, `GROQ_API_KEY=` left blank); `voice/bootstrap.py` and `scripts/{kg_cli,rag_cli,run_voice}.py` (use `build_llm`); `desktop/runtime/health_checks.py` (staged LLM health); `desktop/runtime/manager.py` (labelled provider errors); `backend/api/routes/system.py` (`GET /llm`); `backend/core/redaction.py` (`gsk_` keys); `agent/intelligence/router.py` (time/date answered from the clock); README, TROUBLESHOOTING. No dependency added (httpx was already required); Ollama is not a dependency.
+
+Found while testing: a model-side "response_format ... not supported" 400 was misclassified as "model unavailable" (it now falls back to non-JSON mode, with schema validation as the safety net). Before this change "What time is it?" had no capability behind it and went to the language model, which cannot know the time.
+
+Not verified: real Groq inference and the real voice -> Groq -> Piper loop (no `GROQ_API_KEY` is configured in this environment); see `docs/LLM_PROVIDER.md` and `scripts/llm_real_check.py`.
+
+
+---
+
+# Strict wake policy, voice session/sleep, male voice
+
+**Root cause of the spontaneous "Yes?".** It is only spoken after `_wait_for_wake` returns, and that returned on (1) any single 80 ms frame with an openWakeWord score >= 0.5 (ambient speech, TV, echo and words like "Okay Jarvis"/"Hey Travis" all reach that; the log shows `WAKE_WORD_DETECTED` followed by `No speech captured` repeatedly) and (2) a stale tray/API activation flag that stayed set until the engine next listened. Barge-in used the same one-frame trigger.
+
+**New/changed.** `voice/wake.py` (WakeGate, exact phrase validation, sleep-command grammar, debounce/refractory windows), `voice/engine.py` (validated `WakeEvent` is the only path to the acknowledgement; second-stage local phrase check; manual request TTL; post-TTS block; strong-score barge-in; 120 s audio-time session; sleep command; silent timeout), `voice/status.py` (session_state, sleep_reason, last_wake, wake_rejections), `voice/settings.py`, `voice/bootstrap.py`, `backend/core/config.py`, `.env.example`, local `.env` (TTS lines only), `desktop/runtime/health_checks.py` (`tts_voice_check` names the real voice), `scripts/voice_real_check.py` (strict wake policy with the real models), docs, `tests/voice/test_wake_session_sleep.py` (83 tests). Existing behaviour tests were kept; only the session window default (20 s -> 120 s) changed.
+
+**Found while testing.** A candidate was decided on the first raised frame, pre-empting the direct path (fixed: a rising score is watched until it ends or becomes sustained); the real model fires >= 0.99 on "Okay Jarvis"/"Yes Jarvis", so strong scores are also phrase-checked by default (`WAKE_DIRECT_ACCEPT=false`); a fixed-window capture reported no duration and could loop forever (time now always advances).
+
+**Male voice.** `en_US-ryan-medium` (Piper's official male `ryan` voice) was NOT installed (only the female `lessac`); it was downloaded with the project's own `piper.download_voices` from the official piper-voices repository and verified (`dataset: ryan`, different model hash, lower pitch estimate 204 Hz vs 266 Hz for lessac on the same sentence). `.env` now points at it.
+
+**Limits.** A standalone "Jarvis" is detected by the hey_jarvis model only inconsistently (synthetic "Jarvis." scored 0.98, bare "Jarvis" 0.03), so it relies on the candidate path and may need a second try; real human voices were not exercised by the automated run.

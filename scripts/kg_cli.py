@@ -4,7 +4,7 @@
 Usage:
     python scripts/kg_cli.py stats
     python scripts/kg_cli.py sync-memory                 # rebuild memory-derived facts from active memories
-    python scripts/kg_cli.py extract-doc <document_id>   # LLM extraction from an indexed document (uses Ollama)
+    python scripts/kg_cli.py extract-doc <document_id>   # LLM extraction from an indexed document (uses the configured LLM provider)
     python scripts/kg_cli.py entities [text]
     python scripts/kg_cli.py related "<entity name>"
     python scripts/kg_cli.py path "<entity A>" "<entity B>"
@@ -24,7 +24,7 @@ from agent.knowledge_graph.extraction import GraphExtractor  # noqa: E402
 from agent.knowledge_graph.models import GraphError  # noqa: E402
 from agent.knowledge_graph.sync import DocumentGraphIngestor, MemoryGraphSync  # noqa: E402
 from backend.core.config import get_settings  # noqa: E402
-from backend.core.llm.ollama_provider import OllamaProvider  # noqa: E402
+from backend.core.llm.factory import build_llm  # noqa: E402
 from backend.core.logging import configure_logging  # noqa: E402
 from voice.bootstrap import _build_memory, build_graph_service, build_rag_service  # noqa: E402
 
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(f"{MemoryGraphSync(graph).sync_all(memory)} memories produced graph facts.")
         elif args.command == "extract-doc":
-            llm = OllamaProvider(settings.OLLAMA_BASE_URL, settings.LLM_MODEL)
+            llm = build_llm(settings)
             rag = build_rag_service(settings, llm)
             if rag is None:
                 print("JARVIS_RAG_ENABLED is false.")

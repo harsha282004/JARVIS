@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent.rag.loaders import SUPPORTED_EXTENSIONS  # noqa: E402
 from agent.rag.models import RAGError  # noqa: E402
 from backend.core.config import get_settings  # noqa: E402
-from backend.core.llm.ollama_provider import OllamaProvider  # noqa: E402
+from backend.core.llm.factory import build_llm  # noqa: E402
 from backend.core.logging import configure_logging  # noqa: E402
 from voice.bootstrap import build_rag_service  # noqa: E402
 
@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = get_settings()
     configure_logging(settings.LOG_LEVEL)
-    rag = build_rag_service(settings, OllamaProvider(settings.OLLAMA_BASE_URL, settings.LLM_MODEL))
+    rag = build_rag_service(settings, build_llm(settings))
     if rag is None:
         print("JARVIS_RAG_ENABLED is false.")
         return 1
