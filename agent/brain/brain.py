@@ -53,6 +53,7 @@ from agent.proactive.intents import (
     ProactiveAction,
     parse_proactive_action,
 )
+from agent.brain.semantic_fallback import resolve_gmail_fallback
 from agent.tools.base import ToolDescriptor
 from backend.core.llm.base import LLMProvider
 from backend.core.llm.messages import Message, Role
@@ -133,6 +134,17 @@ class AgentBrain:
             self._log_decision(decision)
             return decision
 
+        # Every attempt produced output too malformed to interpret at all (e.g. action_request naming neither an
+        # action nor a tool -- see _interpret). Before giving up, the same bounded, capability-based fallback used in
+        # _action_decision gets one try here too: this is the OTHER shape the real, observed sampling-variance bug
+        # takes (the model's JSON never even names a tool), and it deserves the exact same safety net.
+        catalog = {tool.name.lower(): tool for tool in request.tools}
+        gmail_action = self._gmail_fallback(request.user_text, catalog)
+        if gmail_action is not None:
+            logger.info("AGENT_INPUT semantic_domain=gmail resolver=fallback (after malformed LLM output)")
+            logger.info("TOOL_SELECTED tool=%s resolver=fallback", gmail_action.name.value)
+            return self._action_decision_for(gmail_action, catalog)
+
         logger.error("Agent gave no valid decision; using safe fallback")
         return AgentDecision(
             intent=Intent.CONVERSATION,
@@ -184,11 +196,37 @@ class AgentBrain:
             raise InvalidAgentOutput("action_request intent named no action and no tools")
         return self._action_decision(output, request)
 
+    def _action_decision_for(self, gmail_action: GmailAction, catalog: dict[str, ToolDescriptor]) -> AgentDecision:
+        """An AgentDecision around a single, already-resolved GmailAction (the fallback's exhausted-LLM-output path
+        in `decide()`). Builds the same plan/selection/permission shape `_action_decision` would for an LLM-resolved
+        action, so it is indistinguishable downstream (executor, permissions, response) from a normal resolution."""
+        selection = self._select(gmail_action.name.value, catalog)
+        requires_permission = (not selection.available) or selection.requires_permission
+        plan = self._planner.build_plan(goal="Carry out the user's request", prepare_steps=[], tools=[selection.name], requires_permission=requires_permission)
+        return AgentDecision(intent=Intent.ACTION_REQUEST, action_required=True, plan=plan, response=ACTION_RESPONSE,
+                             selected_tools=[selection], requires_permission=requires_permission,
+                             confidence=0.6, reasoning_summary="Resolved via deterministic semantic fallback.", gmail_action=gmail_action)
+
     def _action_decision(self, output: LLMDecisionOutput, request: AgentRequest) -> AgentDecision:
         catalog = {tool.name.lower(): tool for tool in request.tools}
         (task_action, gmail_action, event_action, calendar_action, message_action, proactive_action,
          briefing_action) = self._proposed_action(output, catalog)
         proposed = task_action or gmail_action or event_action or calendar_action or message_action or proactive_action or briefing_action
+        resolver = "llm" if proposed is not None else None
+        response = ACTION_RESPONSE
+        unavailable = None
+        if proposed is None:
+            unavailable = self._unavailable_domain(output.action)
+            if unavailable is None:
+                # The LLM's structured decision produced no concrete action for this turn -- a real, known failure
+                # mode: the identical request can non-deterministically resolve or not resolve at sampling time (see
+                # agent/brain/semantic_fallback.py). Before giving up, try the bounded, capability-based deterministic
+                # fallback for the small set of high-confidence concepts worth guaranteeing (currently Gmail). It is
+                # tried only here -- after real LLM resolution has already failed -- and only produces a concrete,
+                # validated action through the same parser/tool-registry path an LLM-proposed one would.
+                gmail_action = self._gmail_fallback(request.user_text, catalog)
+                if gmail_action is not None:
+                    proposed, resolver = gmail_action, "fallback"
         names = list(output.tools)
         if proposed is not None and proposed.name.value not in {n.lower() for n in names}:
             names.append(proposed.name.value)  # the action itself names the tool it needs
@@ -203,14 +241,14 @@ class AgentBrain:
             tools=[s.name for s in selections],
             requires_permission=requires_permission,
         )
-        response = ACTION_RESPONSE
-        if proposed is None:
+        if proposed is None and unavailable is not None:
             # The model named a real action, but every domain it could belong to has no matching tool registered
             # right now (that integration is turned off / not connected) -- an honest, specific reason instead of the
             # generic filler (Phase 3: GMAIL_NOT_CONNECTED and friends, spoken in plain language).
-            unavailable = self._unavailable_domain(output.action)
-            if unavailable is not None:
-                response = f"{unavailable} isn't connected right now, so I can't do that."
+            response = f"{unavailable} isn't connected right now, so I can't do that."
+        logger.info("AGENT_INPUT semantic_domain=%s resolver=%s", "gmail" if gmail_action else ("task" if task_action else "other"), resolver or "none")
+        if proposed is not None:
+            logger.info("TOOL_SELECTED tool=%s resolver=%s", proposed.name.value, resolver)
         return AgentDecision(
             intent=Intent.ACTION_REQUEST,
             action_required=True,
@@ -276,6 +314,23 @@ class AgentBrain:
             if low in names:
                 return _DOMAIN_LABEL[domain]
         return None
+
+    @staticmethod
+    def _gmail_fallback(user_text: str, catalog: dict[str, ToolDescriptor]) -> GmailAction | None:
+        """The deterministic semantic fallback (agent/brain/semantic_fallback.py), only reached after the LLM's own
+        structured decision failed to produce a concrete action. Returns None (never guesses) unless the request
+        matches a high-confidence concept AND the resolved tool is actually registered (Gmail enabled); the action is
+        still built and validated through the exact same `parse_gmail_action` every LLM-proposed one goes through, so
+        it carries no less validation, permission or untrusted-content handling than the normal path."""
+        match = resolve_gmail_fallback(user_text)
+        if match is None:
+            return None
+        if match.action["name"] not in catalog:
+            return None  # Gmail is not registered (disabled/not connected): let the normal unavailable-domain path answer
+        try:
+            return parse_gmail_action(match.action)
+        except InvalidGmailAction:
+            return None  # a fallback match that somehow fails validation is dropped, never forced through
 
     @staticmethod
     def _select(name: str, catalog: dict[str, ToolDescriptor]) -> ToolSelection:

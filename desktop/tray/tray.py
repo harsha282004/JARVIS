@@ -79,6 +79,7 @@ class TrayActions:
     # The JARVIS voice ON/OFF switch (voice.switch.VoiceSwitch): `toggle_voice_power` flips it, `voice_power_on` reads the real state.
     toggle_voice_power: Callable[[], object] | None = None
     voice_power_on: Callable[[], bool] | None = None
+    voice_snapshot: Callable[[], dict] | None = None  # voice.status.VoiceStatus.snapshot: the same dict the dashboard reads, for the tooltip
     open_voice_settings: Callable[[], None] | None = None
     # Phase 19 voice controls. Each toggle has a matching state reader so the menu shows what is really on.
     stop_speaking: Callable[[], bool] | None = None
@@ -190,8 +191,16 @@ class TrayController:
             pystray.MenuItem("JARVIS", None, enabled=False),
             pystray.MenuItem(lambda item: self.view().label, None, enabled=False),
             pystray.MenuItem(lambda item: self.view().voice_label, None, enabled=False),
-            pystray.MenuItem(lambda item: "JARVIS — ON  (click to turn OFF)" if self._voice_on() else "JARVIS — OFF  (click to turn ON)", self._toggle_voice_power,
-                             checked=lambda item: self._voice_on(), enabled=lambda item: a.toggle_voice_power is not None),
+            # Two lines, not one: a plain status line ("Voice: ON/OFF") and, right under it, the ONE valid action for
+            # that state -- never both "Turn Voice ON" and "Turn Voice OFF" shown together. The action item carries
+            # `default=True`: pystray invokes exactly that item on a left click (Menu.__call__ finds the first
+            # default item), so a single left click on the tray icon toggles voice with no menu needed. This is the
+            # authoritative voice.switch.VoiceSwitch the dashboard also uses (`toggle_voice_power` = `switch.toggle`),
+            # never a tray-local flag -- see the "not voice_power_on()" fallback below for how it stays honest even
+            # when nothing is wired.
+            pystray.MenuItem(lambda item: ("●" if self._voice_on() else "○") + " Voice: " + ("ON" if self._voice_on() else "OFF"), None, enabled=False),
+            pystray.MenuItem(lambda item: "Turn Voice OFF" if self._voice_on() else "Turn Voice ON", self._toggle_voice_power,
+                             default=True, enabled=lambda item: a.toggle_voice_power is not None),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Talk to JARVIS", self._talk,
                              enabled=lambda item: a.talk is not None and state() is RuntimeState.RUNNING and self._voice_on()),
@@ -252,12 +261,24 @@ class TrayController:
         return show
 
     def _toggle_voice_power(self, icon=None, item=None) -> None:
-        """Runs the same VoiceSwitch the dashboard uses; the menu then re-reads the real state (never a local flag)."""
-        if self._actions.toggle_voice_power is not None:
+        """Runs the same VoiceSwitch the dashboard uses (left click on the icon, or the "Turn Voice ON/OFF" menu
+        item); the menu/tooltip then re-read the real state from that switch, never a local flag, so a failure here
+        can never leave the tray claiming a state that didn't actually happen."""
+        if self._actions.toggle_voice_power is None:
+            return
+        requested_off = self._voice_on()  # about to flip: True means we are turning it OFF
+        logger.info("TRAY_VOICE_TOGGLE requested=%s", "off" if requested_off else "on")
+        try:
+            self._actions.toggle_voice_power()
+        except Exception as exc:  # noqa: BLE001 - a menu click must never crash the tray
+            logger.error("Unable to %s voice from the tray (%s)", "disable" if requested_off else "enable", type(exc).__name__)
             try:
-                self._actions.toggle_voice_power()
-            except Exception as exc:  # noqa: BLE001 - a menu click must never crash the tray
-                logger.warning("Tray voice ON/OFF failed (%s)", type(exc).__name__)
+                self.notify("JARVIS", f"Unable to turn voice {'off' if requested_off else 'on'}. It stays {'on' if self._voice_on() else 'off'}.")
+            except TrayError:
+                pass
+        else:
+            now_on = self._voice_on()
+            logger.info("VOICE_STATE_CHANGED source=tray state=%s", "on" if now_on else "off")
         self.refresh()
 
     def _talk(self, icon=None, item=None) -> None:
@@ -314,8 +335,34 @@ class TrayController:
         logger.info("Exit requested from tray")
         self._on_exit()
 
-    @staticmethod
-    def _title(view: TrayView) -> str:
+    def _title(self, view: TrayView) -> str:
+        """The Windows tray tooltip: two short, honest lines built from the real voice snapshot the dashboard also
+        reads (`voice.status.VoiceStatus.snapshot`) -- never a claim of "Listening" while voice is actually OFF, and
+        never a generic label when a more specific one is available. Falls back to the plain runtime/voice labels
+        (the previous tooltip) if no snapshot reader is wired."""
+        if not self._voice_on():
+            return "JARVIS — Voice OFF\nClick to turn Voice ON"[:127]
+        snapshot = None
+        reader = self._actions.voice_snapshot
+        if reader is not None:
+            try:
+                snapshot = reader()
+            except Exception:  # noqa: BLE001 - a tooltip must never crash the tray
+                snapshot = None
+        if snapshot is not None:
+            voice_state = snapshot.get("voice_state")
+            conversation = snapshot.get("conversation") or {}
+            if voice_state == "speaking":
+                return "JARVIS — Speaking"
+            if voice_state in ("transcribing", "thinking"):
+                return "JARVIS — Processing"
+            if voice_state == "listening":
+                return "JARVIS — Voice ON\nListening..."
+            # "waiting": armed for the wake phrase. sleep_reason is only ever set once a conversation has actually
+            # ended (timeout/command); a fresh ON that has never conversed yet has none, and gets the plainer wording.
+            if conversation.get("sleep_reason"):
+                return 'JARVIS — Voice ON\nSleeping — say "Hey JARVIS" to wake'
+            return 'JARVIS — Voice ON\nListening for "Hey JARVIS"'
         title = f"JARVIS - {view.label} - {view.voice_label}"
         if view.detail:
             title += f" ({view.detail})"

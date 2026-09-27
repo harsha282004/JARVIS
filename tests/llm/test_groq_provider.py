@@ -104,6 +104,24 @@ def test_json_max_tokens_defaults_to_a_small_value_independent_of_max_tokens():
     assert p._json_max_tokens == 800 and p._json_max_tokens < p._max_tokens
 
 
+def test_json_mode_uses_a_lower_near_deterministic_temperature():
+    """Routing is not creative writing: json_mode calls get a much lower temperature than conversational answers,
+    reducing (never eliminating -- agent/brain/semantic_fallback.py is the deterministic backstop) how often the
+    identical routing request samples to two different structured outputs."""
+    g = Groq((200, completion('{"a": 1}')), (200, completion("a full spoken answer")))
+    p = g.provider(temperature=0.7, json_temperature=0.05)
+    p.chat([Message(Role.USER, "route this")], json_mode=True)
+    p.chat([Message(Role.USER, "answer this")], json_mode=False)
+    bodies = g.bodies()
+    assert bodies[0]["temperature"] == 0.05
+    assert bodies[1]["temperature"] == 0.7
+
+
+def test_json_temperature_defaults_to_a_low_value():
+    p = GroqProvider(FAKE_KEY, temperature=0.3)
+    assert p._json_temperature == 0.1 and p._json_temperature < p._temperature
+
+
 def test_json_mode_falls_back_when_the_model_rejects_response_format():
     g = Groq((400, {"error": {"message": "response_format json_object is not supported with this model"}}), (200, completion('{"a": 1}')))
     assert g.provider().chat([Message(Role.USER, "x")], json_mode=True) == '{"a": 1}'
@@ -251,9 +269,9 @@ def test_health_check_states_for_the_monitor():
 def test_factory_and_defaults():
     s = Settings()
     assert (s.LLM_PROVIDER, s.LLM_MODEL, s.GROQ_BASE_URL) == ("groq", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1")
-    p = build_llm(Settings(GROQ_API_KEY=FAKE_KEY, LLM_MODEL="llama-3.3-70b-versatile", LLM_MAX_TOKENS=99, LLM_TIMEOUT_SECONDS=7, LLM_MAX_RETRIES=1, LLM_JSON_MAX_TOKENS=123))
+    p = build_llm(Settings(GROQ_API_KEY=FAKE_KEY, LLM_MODEL="llama-3.3-70b-versatile", LLM_MAX_TOKENS=99, LLM_TIMEOUT_SECONDS=7, LLM_MAX_RETRIES=1, LLM_JSON_MAX_TOKENS=123, LLM_JSON_TEMPERATURE=0.2))
     assert isinstance(p, GroqProvider) and p.model == "llama-3.3-70b-versatile" and p._max_tokens == 99 and p._timeout == 7 and p._max_retries == 1
-    assert p._json_max_tokens == 123
+    assert p._json_max_tokens == 123 and p._json_temperature == 0.2
     from backend.core.llm.ollama_provider import OllamaProvider
 
     assert isinstance(build_llm(Settings(LLM_PROVIDER="ollama", LLM_MODEL="llama3")), OllamaProvider)          # switching providers is one setting

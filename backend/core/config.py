@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # reduces how fast an account on a small tokens-per-minute tier gets rate-limited by ordinary conversation, since
     # every turn makes exactly one such call (agent routing) in addition to the real spoken answer.
     LLM_JSON_MAX_TOKENS: int = Field(default=800, ge=64, le=4096)
+    # A structured routing decision is not creative writing: a low, near-deterministic temperature reduces (but,
+    # being sampling, cannot fully eliminate) the same request non-deterministically resolving differently between
+    # calls. See agent/brain/semantic_fallback.py for the bounded deterministic safety net that covers the rest.
+    LLM_JSON_TEMPERATURE: float = Field(default=0.1, ge=0.0, le=1.0)
     LLM_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=300)
     LLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
     # Local alternative provider (LLM_PROVIDER=ollama); nothing else requires it.

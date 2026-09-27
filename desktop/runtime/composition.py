@@ -433,6 +433,7 @@ def build_tray_actions(services: RuntimeServices, manager) -> TrayActions:
 
     return TrayActions(
         toggle_voice_power=switch.toggle if switch is not None else None, voice_power_on=(lambda: switch.enabled) if switch is not None else None,
+        voice_snapshot=(lambda: voice.status.snapshot()) if voice is not None else None,
         stop_speaking=manager.interrupt_speech,
         toggle_mute=voice_toggle("voice_muted"), is_muted=voice_reader("voice_muted"),
         toggle_voice_notifications=voice_toggle("voice_notifications"), voice_notifications_on=voice_reader("voice_notifications"),

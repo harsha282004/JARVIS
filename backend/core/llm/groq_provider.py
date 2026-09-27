@@ -75,8 +75,8 @@ class GroqProvider(LLMProvider):
     name = "groq"
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, base_url: str = DEFAULT_BASE_URL, *, timeout: float = 30.0, max_retries: int = 2, temperature: float = 0.3,
-                 max_tokens: int = 2048, json_max_tokens: int = 800, reasoning_effort: str = "low", transport: httpx.BaseTransport | None = None,
-                 sleep: Callable[[float], None] = time.sleep):
+                 max_tokens: int = 2048, json_max_tokens: int = 800, json_temperature: float = 0.1, reasoning_effort: str = "low",
+                 transport: httpx.BaseTransport | None = None, sleep: Callable[[float], None] = time.sleep):
         self._key = (api_key or "").strip()
         self.model = model
         self._base = base_url.rstrip("/")
@@ -84,6 +84,11 @@ class GroqProvider(LLMProvider):
         self._max_retries = max(0, max_retries)
         self._temperature = temperature
         self._max_tokens = max_tokens
+        # Structured (json_mode) calls are routing decisions, not creative writing: a lower, near-deterministic
+        # temperature reduces (never eliminates -- see agent/brain/semantic_fallback.py for the bounded deterministic
+        # safety net that covers the rest) how often the identical request samples to two different structured
+        # outputs. The conversational answer that follows a resolved action keeps the higher, more natural `temperature`.
+        self._json_temperature = json_temperature
         # A structured (json_mode) call is the agent's routing decision: real replies are a few dozen tokens (see
         # docs/GROQ_RATE_LIMITS.md), never a full answer. Every conversational turn makes exactly one of these calls,
         # so its token budget matters for accounts on a low tokens-per-minute tier: capping it here (independent of
@@ -155,7 +160,8 @@ class GroqProvider(LLMProvider):
     # ---- chat -------------------------------------------------------------------------------------------------------------------------
 
     def _payload(self, messages: Sequence[Message], json_mode: bool, *, max_tokens: int | None = None) -> dict[str, Any]:
-        payload: dict[str, Any] = {"model": self.model, "messages": [{"role": m.role.value, "content": m.content} for m in messages], "temperature": self._temperature,
+        payload: dict[str, Any] = {"model": self.model, "messages": [{"role": m.role.value, "content": m.content} for m in messages],
+                                   "temperature": self._json_temperature if json_mode else self._temperature,
                                    "max_completion_tokens": max_tokens or self._max_tokens, "stream": False}
         if "gpt-oss" in self.model and self._reasoning:
             payload["reasoning_effort"] = self._reasoning            # keeps a spoken assistant's latency low

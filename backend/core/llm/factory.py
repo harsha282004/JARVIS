@@ -15,7 +15,7 @@ def build_llm(settings: Settings) -> LLMProvider:
 
         return GroqProvider(settings.GROQ_API_KEY.get_secret_value(), settings.LLM_MODEL, settings.GROQ_BASE_URL, timeout=settings.LLM_TIMEOUT_SECONDS,
                             max_retries=settings.LLM_MAX_RETRIES, temperature=settings.LLM_TEMPERATURE, max_tokens=settings.LLM_MAX_TOKENS,
-                            json_max_tokens=settings.LLM_JSON_MAX_TOKENS, reasoning_effort=settings.GROQ_REASONING_EFFORT)
+                            json_max_tokens=settings.LLM_JSON_MAX_TOKENS, json_temperature=settings.LLM_JSON_TEMPERATURE, reasoning_effort=settings.GROQ_REASONING_EFFORT)
     if name == "ollama":
         from backend.core.llm.ollama_provider import OllamaProvider
 

@@ -333,12 +333,18 @@ def test_tray_shows_jarvis_on_off_and_toggles_it(tmp_path):
     actions = TrayActions(toggle_voice_power=lambda: on.__setitem__("v", not on["v"]), voice_power_on=lambda: on["v"])
     tray = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=actions)
     menu = tray._build_menu()
-    power_item = next(i for i in menu.items if i is not None and isinstance(i.text, str) and "click to turn" in i.text)
-    assert "ON" in power_item.text
+
+    def status_item():
+        return next(i for i in menu.items if i is not None and isinstance(i.text, str) and i.text.endswith("Voice: ON") or (i is not None and isinstance(i.text, str) and i.text.endswith("Voice: OFF")))
+
+    def action_item():
+        return next(i for i in menu.items if i is not None and isinstance(i.text, str) and i.text.startswith("Turn Voice "))
+
+    assert status_item().text == "● Voice: ON" and action_item().text == "Turn Voice OFF" and action_item().default
     tray._toggle_voice_power()
-    assert on["v"] is False and "OFF" in power_item.text
+    assert on["v"] is False and status_item().text == "○ Voice: OFF" and action_item().text == "Turn Voice ON"
     tray._toggle_voice_power()
-    assert on["v"] is True
+    assert on["v"] is True and status_item().text == "● Voice: ON"
 
 
 def test_tray_voice_items_are_greyed_out_when_nothing_is_wired():
@@ -346,6 +352,81 @@ def test_tray_voice_items_are_greyed_out_when_nothing_is_wired():
     for name in ("Mute voice", "Voice notifications", "Do Not Disturb", "Open dashboard", "Stop speaking"):
         entry = next(i for i in menu.items if i and i.text == name)
         assert entry.enabled is False, name
+
+
+def test_left_click_on_the_tray_icon_toggles_voice():
+    """pystray invokes the menu's one `default=True` item on a plain left click (Menu.__call__): this proves that
+    item is the voice toggle and nothing else, so a left click on the JARVIS icon really does flip voice ON/OFF."""
+    on = {"v": True}
+    actions = TrayActions(toggle_voice_power=lambda: on.__setitem__("v", not on["v"]), voice_power_on=lambda: on["v"])
+    tray = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=actions)
+    menu = tray._build_menu()
+    defaults = [i for i in menu.items if i is not None and getattr(i, "default", False)]
+    assert len(defaults) == 1 and defaults[0].text == "Turn Voice OFF"
+    menu(icon=None)  # simulates pystray's WM_LBUTTONUP -> Icon.__call__ -> Menu.__call__
+    assert on["v"] is False
+
+
+def test_tray_error_turning_voice_off_keeps_the_real_state_and_notifies(caplog):
+    """A failure must never be reported as success: the tray re-reads the real switch state after any error, and
+    logs an actionable message instead of pretending the toggle worked."""
+    import logging
+
+    def boom():
+        raise RuntimeError("switch is jammed")
+
+    actions = TrayActions(toggle_voice_power=boom, voice_power_on=lambda: True)
+    tray = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=actions)
+    with caplog.at_level(logging.ERROR):
+        tray._toggle_voice_power()
+    assert "Unable to disable voice" in caplog.text
+    assert tray._voice_on() is True  # unchanged: the failed toggle never happened
+
+
+def test_tray_voice_toggle_logs_the_request_and_the_resulting_state(caplog):
+    import logging
+
+    on = {"v": True}
+    actions = TrayActions(toggle_voice_power=lambda: on.__setitem__("v", not on["v"]), voice_power_on=lambda: on["v"])
+    tray = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=actions)
+    with caplog.at_level(logging.INFO):
+        tray._toggle_voice_power()
+    assert "TRAY_VOICE_TOGGLE requested=off" in caplog.text
+    assert "VOICE_STATE_CHANGED source=tray state=off" in caplog.text
+
+
+def test_tooltip_says_voice_off_and_never_claims_listening():
+    actions = TrayActions(voice_power_on=lambda: False)
+    tray = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=actions)
+    title = tray._title(tray.view())
+    assert title == "JARVIS — Voice OFF\nClick to turn Voice ON"
+    assert "Listening" not in title
+
+
+@pytest.mark.parametrize("voice_state,session,sleep_reason,expected", [
+    ("waiting", "asleep", None, 'JARVIS — Voice ON\nListening for "Hey JARVIS"'),
+    ("waiting", "asleep", "timeout", 'JARVIS — Voice ON\nSleeping — say "Hey JARVIS" to wake'),
+    ("listening", "active", None, "JARVIS — Voice ON\nListening..."),
+    ("transcribing", "active", None, "JARVIS — Processing"),
+    ("thinking", "active", None, "JARVIS — Processing"),
+    ("speaking", "active", None, "JARVIS — Speaking"),
+])
+def test_tooltip_reflects_the_real_voice_snapshot(voice_state, session, sleep_reason, expected):
+    snapshot = {"voice_state": voice_state, "conversation": {"session": session, "sleep_reason": sleep_reason}}
+    actions = TrayActions(voice_power_on=lambda: True, voice_snapshot=lambda: snapshot)
+    tray = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=actions)
+    assert tray._title(tray.view()) == expected
+
+
+def test_tooltip_falls_back_gracefully_when_the_snapshot_reader_is_missing_or_fails():
+    tray_no_reader = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=TrayActions(voice_power_on=lambda: True))
+    assert tray_no_reader._title(tray_no_reader.view())  # does not raise; some reasonable text
+
+    def broken():
+        raise RuntimeError("boom")
+
+    tray_broken = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=TrayActions(voice_power_on=lambda: True, voice_snapshot=broken))
+    assert tray_broken._title(tray_broken.view())  # does not raise either
 
 
 # ---- security ------------------------------------------------------------------------------------------------------------------------------------

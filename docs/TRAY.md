@@ -11,13 +11,25 @@ next to the clock — this is a per-icon Windows setting (Settings → Personali
 appear on the taskbar"), not something JARVIS controls. Both locations are the same icon; if you don't see JARVIS at a
 glance, click **"^"** first. If it isn't there either, see "Missing tray icon" below.
 
-## Menu
+## Left click: instant Voice ON/OFF
+
+**A single left click on the JARVIS tray icon toggles voice ON/OFF directly — no menu needed.** This is the fastest
+way to control JARVIS: pystray invokes the menu's one `default=True` item on a plain click, and that item is the
+same "Turn Voice ON"/"Turn Voice OFF" action described below, calling the exact same `VoiceSwitch` the dashboard uses
+(`desktop/tray/tray.py::_toggle_voice_power`). It is deterministic — no LLM call is involved — and it only ever
+toggles the voice subsystem: the application, dashboard, API, Gmail, Calendar and Agent all keep running unaffected.
+If the toggle fails for some reason, the tray logs it and shows a balloon notification rather than silently claiming
+success; the icon/tooltip always re-read the real switch state afterward, so it can never show a state that didn't
+actually happen.
+
+## Right-click menu
 
 ```
 JARVIS
 <status>                              e.g. 🟢 Online / ⚠ Degraded / ⏻ Voice OFF
 <microphone indicator>                e.g. 🎙 Listening / 🔇 Microphone disabled
-JARVIS — ON  (click to turn OFF)      <- the voice ON/OFF switch (see docs/VOICE.md)
+● Voice: ON                           <- plain status line (○ Voice: OFF when off)
+Turn Voice OFF                        <- the ONE valid action for the current state (default item: also the left-click action)
 ---
 Talk to JARVIS                        starts a conversation without the wake word
 Stop speaking
@@ -52,6 +64,24 @@ These look similar but answer different questions:
 
 When any of these keeps the microphone closed, the tray shows it truthfully: OFF is `⏻ Voice OFF`; Paused/Private show
 `⏸ Paused` with the reason in the tooltip detail.
+
+## Tooltip
+
+Hovering the icon shows the real, current voice state in one or two short lines (never a claim of "Listening" while
+voice is actually off), read from the same `voice.status.VoiceStatus.snapshot()` the dashboard uses:
+
+| State | Tooltip |
+|---|---|
+| OFF | `JARVIS — Voice OFF` / `Click to turn Voice ON` |
+| ON, never conversed yet | `JARVIS — Voice ON` / `Listening for "Hey JARVIS"` |
+| ON, sleeping after a conversation | `JARVIS — Voice ON` / `Sleeping — say "Hey JARVIS" to wake` |
+| Mid-conversation, listening | `JARVIS — Voice ON` / `Listening...` |
+| Transcribing or thinking | `JARVIS — Processing` |
+| Speaking | `JARVIS — Speaking` |
+
+The "never conversed yet" vs "sleeping after a conversation" distinction uses `conversation.sleep_reason` from the
+snapshot (`None` until the first conversation actually ends) — both are technically the same engine state
+(`voice_state == "waiting"`), so this is the one honest signal available to tell them apart, not a fabricated one.
 
 ## What's real, never faked
 

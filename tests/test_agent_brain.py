@@ -148,6 +148,80 @@ def test_available_gmail_action_is_carried_through_normally():
     assert decision.response == ACTION_RESPONSE  # unchanged for the normal, successful path
 
 
+# ---- deterministic semantic fallback (root cause reproduction: action_request / tool=null sampling variance) --------------------
+
+GMAIL_TOOLS = [ToolDescriptor(name="gmail_get_message", description="Read a Gmail message", requires_permission=True),
+              ToolDescriptor(name="gmail_search", description="Search Gmail", requires_permission=True)]
+
+
+def test_reproduces_the_reported_bug_then_the_fallback_resolves_it():
+    """Exact reproduction of the live failure: the LLM says action_request but supplies no action at all for
+    "What is the last mail I received in my Gmail?" on BOTH of its attempts (the one retry already in `decide()` is
+    not enough by itself -- this is real, observed sampling variance, not a hypothetical). The deterministic
+    semantic fallback must still resolve it to the real gmail_get_message/latest capability."""
+    brain, llm = make(out("action_request"), out("action_request"), tools=GMAIL_TOOLS)
+    decision = decide(brain, "What is the last mail I received in my Gmail?")
+    assert len(llm.calls) == 2  # the LLM was tried, and retried, before the fallback ever ran
+    assert decision.gmail_action is not None
+    assert decision.gmail_action.name.value == "gmail_get_message" and decision.gmail_action.arguments.latest is True
+    assert decision.response == ACTION_RESPONSE  # a normal, resolved action response -- not the old generic filler
+
+
+@pytest.mark.parametrize("phrase", [
+    "What's my latest email?", "Show me my newest email.", "What was the most recent email I received?",
+    "Read my latest email.", "Tell me about the newest message in my inbox.", "Did I receive anything recently?",
+    "Check Gmail and show me the latest message.", "What's the last thing someone sent me?", "Can you check my inbox?",
+])
+def test_fallback_covers_the_required_natural_language_matrix_for_the_latest_email(phrase):
+    brain, _ = make(out("action_request"), out("action_request"), tools=GMAIL_TOOLS)
+    decision = decide(brain, phrase)
+    assert decision.gmail_action is not None and decision.gmail_action.name.value == "gmail_get_message"
+    assert decision.gmail_action.arguments.latest is True
+
+
+def test_fallback_covers_unread_and_search_concepts():
+    brain, _ = make(out("action_request"), out("action_request"), tools=GMAIL_TOOLS)
+    unread = decide(brain, "Show my unread emails.")
+    assert unread.gmail_action.name.value == "gmail_search" and unread.gmail_action.arguments.query == "is:unread"
+
+    brain2, _ = make(out("action_request"), out("action_request"), tools=GMAIL_TOOLS)
+    found = decide(brain2, "Find emails from Google.")
+    assert found.gmail_action.name.value == "gmail_search" and "google" in found.gmail_action.arguments.query
+
+
+@pytest.mark.parametrize("phrase", ["What should I do about my emails?", "Email is confusing.", "Do something with Gmail.", "Handle my inbox."])
+def test_fallback_never_guesses_on_genuinely_ambiguous_requests(phrase):
+    """These must NOT resolve to an arbitrary Gmail action -- they fall through to the normal safe conversation
+    fallback, exactly like any other unresolvable action_request."""
+    brain, llm = make(out("action_request"), out("action_request"), tools=GMAIL_TOOLS)
+    decision = decide(brain, phrase)
+    assert decision.gmail_action is None and decision.intent is Intent.CONVERSATION and decision.response == FALLBACK_RESPONSE
+
+
+def test_fallback_never_fires_when_gmail_is_not_registered():
+    """The fallback must never resolve a tool that isn't actually available -- that stays the honest
+    "Gmail isn't connected" (or, with no tools at all, the safe generic fallback) path, never a fabricated action."""
+    brain, _ = make(out("action_request"), out("action_request"), tools=[])
+    decision = decide(brain, "What is the last mail I received in my Gmail?")
+    assert decision.gmail_action is None
+
+
+def test_fallback_does_not_run_when_the_llm_already_resolved_an_action():
+    """The fallback is a last resort: it must never override a real LLM resolution, even one for a different tool."""
+    brain, llm = make(out("action_request", action={"name": "gmail_search", "arguments": {"query": "is:unread"}}), tools=GMAIL_TOOLS)
+    decision = decide(brain, "What is the last mail I received in my Gmail?")
+    assert len(llm.calls) == 1  # no retry needed: the first attempt already resolved
+    assert decision.gmail_action.name.value == "gmail_search" and decision.gmail_action.arguments.query == "is:unread"
+
+
+def test_fallback_defers_to_the_unavailable_domain_message_when_the_model_named_gmail_explicitly():
+    """If the model DID name a real gmail_* action but it's unavailable (disabled), that specific honest message
+    still wins over attempting the fallback -- the user is told why, not given an unrelated silent substitution."""
+    brain, _ = make(out("action_request", action={"name": "gmail_get_message", "arguments": {"latest": True}}), tools=[])
+    decision = decide(brain, "What is the last mail I received in my Gmail?")
+    assert decision.gmail_action is None and decision.response == "Gmail isn't connected right now, so I can't do that."
+
+
 def test_mixed_known_and_unknown_tools_require_permission():
     brain, _ = make(out("action_request", tools=["notes", "calendar"]), tools=[NOTES_TOOL])
     d = decide(brain)
