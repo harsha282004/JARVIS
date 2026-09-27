@@ -187,34 +187,80 @@ def list_input_devices() -> list[dict]:
         raise AudioDeviceError(f"Could not list audio devices: {exc}") from exc
 
 
+_WARMUP_SECONDS = 0.12       # long enough for Windows/WASAPI to spin up a shared-mode stream once, short enough to be inaudible
+_WARMUP_AMPLITUDE = 0.0005   # near-silent: this primes the device, it is not meant to be heard
+_MAX_GAIN = 2.0              # VOICE_TTS_VOLUME above 1.0 amplifies (soft-clipped below); this is the ceiling
+_SOFT_CLIP_KNEE = 0.9        # samples above this fraction of full scale are compressed rather than hard-clipped
+
+
+def _soft_clip(samples: np.ndarray) -> np.ndarray:
+    """tanh-based soft clipper above `_SOFT_CLIP_KNEE`: a gain that would otherwise clip harshly is rounded off
+    instead, so raising VOICE_TTS_VOLUME cannot produce the sharp digital distortion a hard clip would."""
+    knee = _SOFT_CLIP_KNEE
+    over = np.abs(samples) > knee
+    if not np.any(over):
+        return samples
+    out = samples.copy()
+    sign = np.sign(out[over])
+    excess = (np.abs(out[over]) - knee) / (1.0 - knee)
+    out[over] = sign * (knee + (1.0 - knee) * np.tanh(excess))
+    return out
+
+
 class AudioOutput:
     """Speaker playback that can be stopped at any moment (barge-in).
 
     `play()` blocks until finished (or `stop()`); `start()` returns immediately so the caller can keep listening while
-    JARVIS talks. `volume` (0..1) is applied to the samples, so it works for any TTS engine.
+    JARVIS talks. `volume` applies to every sample so it works for any TTS engine: 0..1 attenuates; above 1.0 (up to
+    `_MAX_GAIN`) amplifies a quiet voice model's output, soft-clipped so it never produces harsh digital distortion.
+
+    Piper already peaks each utterance near 0 dBFS (measured: "Yes?" and a five-second sentence both peak at 1.0), so a
+    quiet-sounding short acknowledgement is not a gain problem. It is much more often a COLD START: `sd.play()` opens a
+    fresh output stream on first use, and on Windows/WASAPI that stream's first ~100-200 ms can be lost while the audio
+    engine spins up -- a cost a five-second sentence barely notices but that can swallow most of a 150 ms "Yes?". Call
+    `warm_up()` once, before any real speech, to pay that cost on a silent trial clip instead of on the first real word.
     """
 
-    def __init__(self, device: str = "", volume: float = 1.0):
+    def __init__(self, device: str = "", volume: float = 1.0, backend=None):
         self._device = _resolve_device(device)
         self.volume = volume
+        self._sd = backend if backend is not None else sd
+        self._warmed = False
+
+    def warm_up(self) -> None:
+        """Play a near-silent, brief clip so the OS output stream is already open by the time real speech is spoken.
+        Best-effort and idempotent: a failure here only means the first real utterance pays the cold-start cost, same
+        as before this existed; it never raises and never blocks longer than the clip itself."""
+        if self._warmed:
+            return
+        try:
+            samples = (np.random.default_rng(0).uniform(-1.0, 1.0, int(_WARMUP_SECONDS * 22050)).astype(np.float32) * _WARMUP_AMPLITUDE)
+            self._sd.play(samples, samplerate=22050, device=self._device)
+            self._sd.wait()
+            self._warmed = True  # only on success: a failed attempt (device not ready yet) may still succeed next cycle
+        except Exception:  # noqa: BLE001 - warm-up is an optimization, never a requirement
+            logger.warning("Audio output warm-up failed; the first spoken reply may be quieter than usual")
 
     def _scaled(self, samples: np.ndarray) -> np.ndarray:
-        if self.volume >= 0.999:
+        gain = min(max(self.volume, 0.0), _MAX_GAIN)
+        if abs(gain - 1.0) < 1e-6:
             return samples
         if samples.dtype == np.int16:
-            return (samples.astype(np.float32) * self.volume).astype(np.int16)
-        return samples.astype(np.float32) * self.volume
+            scaled = samples.astype(np.float32) / 32767.0 * gain
+            return (_soft_clip(scaled) * 32767.0).astype(np.int16)
+        scaled = samples.astype(np.float32) * gain
+        return _soft_clip(scaled) if gain > 1.0 else scaled
 
     def start(self, samples: np.ndarray, sample_rate: int) -> None:
         try:
-            sd.play(self._scaled(samples), samplerate=sample_rate, device=self._device)
+            self._sd.play(self._scaled(samples), samplerate=sample_rate, device=self._device)
         except Exception as exc:  # noqa: BLE001 - PortAudio raises various backend errors
             raise AudioDeviceError(f"Could not play audio through speakers: {exc}") from exc
 
     @property
     def is_playing(self) -> bool:
         try:
-            stream = sd.get_stream()
+            stream = self._sd.get_stream()
             return bool(stream.active)
         except Exception:  # noqa: BLE001 - no stream yet / already closed
             return False
@@ -222,13 +268,13 @@ class AudioOutput:
     def stop(self) -> None:
         """Silence the speakers immediately. Safe to call when nothing is playing."""
         try:
-            sd.stop()
+            self._sd.stop()
         except Exception:  # noqa: BLE001 - stopping must never raise
             pass
 
     def play(self, samples: np.ndarray, sample_rate: int) -> None:
         self.start(samples, sample_rate)
         try:
-            sd.wait()
+            self._sd.wait()
         except Exception as exc:  # noqa: BLE001
             raise AudioDeviceError(f"Could not play audio through speakers: {exc}") from exc

@@ -220,8 +220,9 @@ python scripts/run_voice.py
 
 ```powershell
 python -m desktop.launcher                    # run with tray icon
-python -m desktop.launcher --enable-startup   # optional: start with Windows
-python -m desktop.launcher --disable-startup
+.\.venv\Scripts\python.exe scripts\windows\jarvis_launcher.pyw --enable-startup    # optional: start with Windows (Task Scheduler task, no admin)
+.\.venv\Scripts\python.exe scripts\windows\jarvis_launcher.pyw --disable-startup
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\start_jarvis.ps1   # start now (from anywhere); status: python scripts\jarvis_status.py
 ```
 
 See [`docs/windows-runtime.md`](docs/windows-runtime.md) for the tray menu,
@@ -278,3 +279,7 @@ frontend dashboard — are described in the JARVIS master project
 specification and are **not** implemented here. Do not assume any
 capability beyond `GET /health`, database connectivity checking, and the
 multi-turn voice pipeline (run as a tray app) described above currently works.
+
+## Gmail
+
+Read-only Gmail over OAuth 2.0: put your Google Desktop OAuth client JSON in `secrets/` (git-ignored), set `JARVIS_GMAIL_ENABLED=true`, press **Connect Gmail** on the dashboard. See [docs/integrations/GMAIL.md](docs/integrations/GMAIL.md).

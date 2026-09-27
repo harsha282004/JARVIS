@@ -98,3 +98,7 @@ Complements the sections above, `security-and-permissions.md`, `PROMPT_INJECTION
 * `barge_in=vad` can be triggered by JARVIS's own voice through the speakers (no echo cancellation); the default `wake_word` mode avoids this.
 * A wake word said by a TV can activate JARVIS; it then hears no speech (counted, health reports "noisy") or hears the TV (which is untrusted text like any other).
 * Priority `critical` is only as trustworthy as its sender: Gmail-derived alerts are limited by the hub (only a critical-classified email produces one).
+
+## Gmail OAuth
+
+Only `gmail.readonly` is requested. The Desktop client JSON lives in the git-ignored `secrets/` folder and is never printed, logged or returned by the API; tokens are kept in the secret store (DPAPI when enabled) and never reach the dashboard, voice or the LLM. Email subject, body, sender name, HTML and attachment names are scanned as untrusted input. Details: [integrations/GMAIL.md](integrations/GMAIL.md).

@@ -126,7 +126,8 @@ def test_registry_health_maps_status_truthfully(tmp_path):
 def test_composition_registers_all_five_integrations_and_reports_unconfigured_ones_truthfully(tmp_path):
     from desktop.runtime.composition import build_runtime_services
 
-    settings = Settings(_env_file=None, DATABASE_URL="sqlite://", JARVIS_STATE_DIR=str(tmp_path / "state"), JARVIS_GMAIL_ENABLED=True, JARVIS_CALENDAR_ENABLED=False,
+    settings = Settings(_env_file=None, DATABASE_URL="sqlite://", JARVIS_STATE_DIR=str(tmp_path / "state"), JARVIS_GMAIL_ENABLED=True,
+                        JARVIS_GMAIL_TOKEN_PATH=str(tmp_path / "gmail-token.json"), JARVIS_GMAIL_CREDENTIALS_PATH=str(tmp_path / "gmail-credentials.json"), JARVIS_SECRETS_DIR=str(tmp_path / "secrets"), JARVIS_CALENDAR_ENABLED=False,
                         JARVIS_GITHUB_ENABLED=True, JARVIS_DOCUMENT_DIRS=str(tmp_path), JARVIS_RAG_ENABLED=False, JARVIS_MEMORY_ENABLED=False, JARVIS_EVENTS_ENABLED=False)
     services = build_runtime_services(settings, None, tmp_path)
     try:

@@ -21,6 +21,7 @@ class TrayState(StrEnum):
     OFFLINE = "offline"
     PAUSED = "paused"
     DEGRADED = "degraded"
+    VOICE_OFF = "voice_off"
 
 
 TRAY_LABELS = {
@@ -29,6 +30,7 @@ TRAY_LABELS = {
     TrayState.OFFLINE: "🔴 Offline",
     TrayState.PAUSED: "⏸ Paused",
     TrayState.DEGRADED: "⚠ Degraded",
+    TrayState.VOICE_OFF: "⏻ Voice OFF",
 }
 
 
@@ -41,9 +43,12 @@ class TrayView:
     detail: str = ""
 
 
-def compute_tray_view(status: RuntimeStatus, overall: OverallStatus | None, mode: PrivacyMode) -> TrayView:
+def compute_tray_view(status: RuntimeStatus, overall: OverallStatus | None, mode: PrivacyMode, voice_enabled: bool = True) -> TrayView:
     indicator = voice_indicator(status.state.value, status.voice_state, status.microphone_active, mode)
     detail = ""
+    if not voice_enabled:
+        # The user switched the JARVIS voice OFF: the microphone is released and nothing listens. (The application, dashboard and integrations still run.)
+        return TrayView(TrayState.VOICE_OFF, TRAY_LABELS[TrayState.VOICE_OFF], VoiceIndicator.MICROPHONE_DISABLED, "🔇 Microphone released", "voice off")
     if mode is PrivacyMode.PRIVATE:
         state, detail = TrayState.PAUSED, "private mode"
     elif status.state is RuntimeState.PAUSED or mode is PrivacyMode.PAUSED:

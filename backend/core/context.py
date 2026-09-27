@@ -28,6 +28,9 @@ class AppContext:
     browser: Any = None
     autonomy: Any = None
     operator: Any = None
+    chat: Any = None                   # backend.core.dashboard_chat.DashboardChat: the dashboard command bar's agent session
+    app: Any = None                    # the JarvisApplication (tray status, lifecycle): set by the launcher after it is built
+    startup_source: str = "manual"     # windows | manual | tray | ...
     # Required on every API request except /health and the dashboard page, which embeds it (same-origin only).
     api_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
 

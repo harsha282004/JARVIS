@@ -212,7 +212,7 @@ class GoogleAuthenticator:
                 flow = InstalledAppFlow.from_client_secrets_file(str(self._credentials_path), list(self._scopes))
             else:
                 flow = InstalledAppFlow.from_client_config(self._client_config(), list(self._scopes))
-            credentials = flow.run_local_server(port=0, open_browser=open_browser, prompt="consent")
+            credentials = flow.run_local_server(port=0, open_browser=open_browser, prompt="consent", timeout_seconds=300)
         except Exception as exc:  # noqa: BLE001 - the message can echo parts of the client file: log the type only
             logger.error("%s authorization failed (%s)", self._label, type(exc).__name__)
             raise self._errors.auth_error("authorization failed") from None

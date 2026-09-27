@@ -41,7 +41,7 @@ from integrations.gmail.models import (
 )
 from integrations.gmail.parser import parse_thread
 from integrations.gmail.service import GmailService
-from integrations.gmail.tools import PLACEHOLDER, GmailToolContext, build_gmail_tools
+from integrations.gmail.tools import PLACEHOLDER, GmailReferenceTracker, GmailToolContext, build_gmail_tools
 from tests.gmail_helpers import NOW, FakeGmailClient, ScriptedLLM, message, raw_message
 from tests.task_helpers import IST
 
@@ -59,7 +59,7 @@ class Stack:
         self.client = client or FakeGmailClient(raws)
         self.llm = ScriptedLLM(*replies)
         self.service = GmailService(self.client, self.llm, max_results=max_results)
-        self.tools = build_gmail_tools(GmailToolContext(self.service, IST, lambda: NOW))
+        self.tools = build_gmail_tools(GmailToolContext(self.service, IST, lambda: NOW, GmailReferenceTracker(lambda: NOW)))
         self.descriptors = [t.descriptor() for t in self.tools]
         self.permissions = PermissionManager(tools=[d.security_info() for d in self.descriptors])
         self.agent = AgentBrain(self.llm, tools=self.descriptors, max_plan_steps=8)
@@ -190,6 +190,8 @@ def test_valid_gmail_actions_parse():
     assert parse_gmail_action({"name": "gmail_get_message", "arguments": {"latest": True}}).arguments.latest is True
     assert parse_gmail_action({"name": "gmail_search", "arguments": {}}).arguments.query == ""
     assert parse_gmail_action({"name": "gmail_classify", "arguments": {"query": "from:google", "extra": "ignored"}})
+    same = parse_gmail_action({"name": "gmail_summarize", "arguments": {"same_email": True}})
+    assert same.arguments.same_email is True and same.arguments.query == "" and same.arguments.latest is False
 
 
 @pytest.mark.parametrize(
@@ -256,9 +258,12 @@ def test_invalid_gmail_output_falls_back_safely_after_one_retry(bad):
 
 
 def test_a_gmail_action_is_dropped_when_gmail_is_not_enabled():
+    """When Gmail is disabled/not connected, the model can still correctly recognize a Gmail request; the reply must
+    say so honestly (Phase 3: GMAIL_NOT_CONNECTED) instead of the generic ACTION_RESPONSE filler, which used to be
+    indistinguishable from a genuinely unsupported request."""
     llm = ScriptedLLM(act("gmail_search", query="is:unread"))
     engine = ConversationEngine(llm, 20, 120, agent=AgentBrain(llm, tools=[], max_plan_steps=8), permissions=PermissionManager())
-    assert engine.respond("Do I have unread emails?") == ACTION_RESPONSE
+    assert engine.respond("Do I have unread emails?") == "Gmail isn't connected right now, so I can't do that."
     assert engine.last_decision.gmail_action is None
 
 
@@ -382,6 +387,32 @@ def test_read_a_message_thread_and_classify():
     assert "looks promotional to me (gmail promotions label;" in s.say("Classify the newsletter")
 
 
+def test_follow_up_question_refers_back_to_the_email_just_discussed():
+    """Phase 10 (multi-turn): "What was it about?" after "what's my last email?" must resolve to the SAME email
+    without the user repeating the sender or subject -- the model sets same_email instead of guessing a new search,
+    and the tool re-fetches that exact message by its id rather than reusing anything cached."""
+    s = Stack(INBOX, act("gmail_get_message", latest=True), act("gmail_summarize", same_email=True), "It's a security alert about a new sign-in.")
+    first = s.say("What's the last email I received?")
+    assert first.startswith("Email from Google, subject Security alert")   # m4: the newest message in INBOX
+    follow_up = s.say("What was it about?")
+    assert follow_up == "Email from Google, 'Security alert': It's a security alert about a new sign-in."
+    assert s.client.calls.count(("get_message", "m4")) >= 1               # re-fetched fresh by id, not from a cache
+
+
+def test_follow_up_with_no_prior_email_asks_which_one_instead_of_guessing():
+    s = Stack(INBOX, act("gmail_summarize", same_email=True))
+    reply = s.say("What was it about?")
+    assert reply == "I'm not sure which email you mean -- we haven't talked about one recently. Which one do you mean?"
+
+
+def test_a_new_search_after_a_follow_up_still_works_normally():
+    """same_email must not stick around and hijack an unrelated later request."""
+    s = Stack(INBOX, act("gmail_get_message", latest=True), act("gmail_search", query="from:priya"))
+    s.say("What's the last email I received?")
+    reply = s.say("Find emails from Priya")
+    assert "Priya" in reply and "Project files" in reply
+
+
 def test_attachments_are_reported_as_metadata_only():
     s = Stack(INBOX, act("gmail_get_message", query="project files"))
     reply = s.say("Open the project files email")
@@ -392,7 +423,7 @@ def test_attachments_are_reported_as_metadata_only():
 @pytest.mark.parametrize(
     "error, phrase",
     [
-        (GmailNotConfigured("x"), "Gmail isn't set up yet"),
+        (GmailNotConfigured("x"), "Gmail OAuth credentials not configured"),
         (GmailAuthRevoked("x"), "revoked or has expired"),
         (GmailRateLimited("x"), "rate limiting"),
         (GmailUnavailable("x"), "can't reach Gmail"),
@@ -475,6 +506,17 @@ def test_email_text_is_never_placed_in_history_or_logs(caplog):
         s.say("Any unread emails?")
     assert "Internship" not in caplog.text and "john@example.com" not in caplog.text and "Security alert" not in caplog.text
     assert all("Internship" not in m.content for m in s.engine.session.messages)
+
+
+def test_same_email_follow_up_never_puts_email_text_in_history_either():
+    """The Phase 10 multi-turn path re-fetches the email fresh by its remembered id; that fetch must be exactly as
+    untrusted and history-excluded as a normal search/get, not a new hole that bypasses the existing safeguard."""
+    s = Stack(INBOX, act("gmail_get_message", latest=True), act("gmail_summarize", same_email=True), "It's a security notice.")
+    s.say("What's my last email?")
+    assert s.engine.session.messages[-1].content == PLACEHOLDER
+    s.say("What was it about?")
+    assert s.engine.session.messages[-1].content == PLACEHOLDER
+    assert not any("Security alert" in m.content or "sign-in" in m.content for m in s.engine.session.messages)
 
 
 def test_gmail_package_is_read_only_and_has_no_dynamic_execution_or_database_access():

@@ -23,14 +23,19 @@ class VoiceControl:
     policy: VoicePolicy
     engine_interrupt: Any = None     # () -> None, set by the runtime once an engine exists
     announcements: Any = None        # AnnouncementQueue (for the queue length)
+    switch: Any = None               # voice.switch.VoiceSwitch, attached with the RuntimeManager: the only writer of `voice_enabled`
 
     # ---- commands (all validated by the settings store) ---------------------------------------------------------------
 
     def update(self, changes: dict[str, Any]) -> VoiceSettings:
+        if "voice_enabled" in changes:
+            raise ValueError("voice_enabled is changed with /api/voice/enable and /api/voice/disable")
         return self.settings.update(changes)
 
     def toggle(self, name: str) -> bool:
         """Flip a boolean setting and return the new value."""
+        if name == "voice_enabled":
+            raise ValueError("use the VoiceSwitch")
         value = not getattr(self.settings.current, name)
         self.settings.update({name: value})
         return value
@@ -46,6 +51,10 @@ class VoiceControl:
         snap = self.status.snapshot()
         timers = metrics.snapshot()["timers"]
         snap["settings"] = s.to_dict()
+        if self.switch is not None:
+            snap.update(self.switch.snapshot())
+        else:
+            snap.update({"enabled": s.voice_enabled, "mode": "UNKNOWN", "wake_word_enabled": s.voice_enabled})
         snap["tts"].update({"voice": s.tts_voice, "speed": s.tts_speed, "volume": s.tts_volume, "muted": s.voice_muted})
         snap["stt"].update({"model": s.stt_model, "language": s.stt_language})
         snap["wake_word"].update({"phrase": s.wake_word, "sensitivity": s.wake_sensitivity})

@@ -1,7 +1,7 @@
 """HttpGmailClient: read-only calls to the Gmail REST API over httpx.
 
-- Only GET requests to the fixed Gmail host and only these endpoints: users/me/messages (list, get),
-  users/me/threads/{id}. The base URL, method and path shapes are constants; the model can influence
+- Only GET requests to the fixed Gmail host and only these endpoints: users/me/profile, users/me/labels (+ /{id}), users/me/messages (list, get, attachments),
+  users/me/threads (list, /{id}). The base URL, method and path shapes are constants; the model can influence
   none of them, and ids are validated before they are placed in a path.
 - Bounded retries with exponential backoff (429 rate limits, 5xx, network errors), honouring
   Retry-After up to a cap; a 401 refreshes the token once. No infinite loops.
@@ -21,13 +21,17 @@ from integrations.gmail.base import GmailClient
 from integrations.gmail.models import (
     GmailAuthError,
     GmailError,
+    GmailLabel,
     GmailMessage,
     GmailNotFound,
     GmailPermissionDenied,
+    GmailProfile,
     GmailRateLimited,
     GmailResponseError,
     GmailSearchResult,
     GmailThread,
+    GmailThreadList,
+    GmailThreadSummary,
     GmailUnavailable,
 )
 from integrations.gmail.parser import parse_message, parse_thread
@@ -109,6 +113,42 @@ class HttpGmailClient(GmailClient):
         thread = parse_thread(self._get(f"threads/{validate_id(thread_id)}", {"format": "full"}))
         return thread.model_copy(update={"messages": thread.messages[-MAX_THREAD_MESSAGES:]})
 
+    def profile(self) -> GmailProfile:
+        data = self._get("profile", {})
+        address = data.get("emailAddress")
+        if not isinstance(address, str) or "@" not in address:
+            raise GmailResponseError("profile had no account")
+        return GmailProfile(email_address=address, messages_total=int(data.get("messagesTotal") or 0), threads_total=int(data.get("threadsTotal") or 0))
+
+    def list_labels(self) -> list[GmailLabel]:
+        labels = []
+        for item in (self._get("labels", {}).get("labels") or [])[:500]:
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                labels.append(GmailLabel(id=item["id"], name=str(item.get("name") or item["id"])[:100], type=str(item.get("type") or "user").lower()))
+        return labels
+
+    def get_label(self, label_id: str) -> GmailLabel:
+        data = self._get(f"labels/{validate_id(label_id)}", {})
+
+        def count(key: str) -> int | None:
+            value = data.get(key)
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+        return GmailLabel(id=str(data.get("id") or label_id), name=str(data.get("name") or label_id)[:100], type=str(data.get("type") or "user").lower(),
+                          messages_total=count("messagesTotal"), messages_unread=count("messagesUnread"), threads_unread=count("threadsUnread"))
+
+    def list_threads(self, query: str, max_results: int, page_token: str | None = None) -> GmailThreadList:
+        limit = max(1, min(int(max_results), HARD_MAX_RESULTS))
+        params: dict[str, Any] = {"maxResults": limit}
+        if query:
+            params["q"] = query
+        if page_token:
+            params["pageToken"] = page_token
+        data = self._get("threads", params)
+        threads = [GmailThreadSummary(thread_id=t["id"], snippet=str(t.get("snippet") or "")[:200]) for t in (data.get("threads") or []) if isinstance(t, dict) and isinstance(t.get("id"), str)]
+        token = data.get("nextPageToken") if isinstance(data.get("nextPageToken"), str) else None
+        return GmailThreadList(query=query, threads=threads[:limit], next_page_token=token, estimated_total=max(int(data.get("resultSizeEstimate") or 0), len(threads)))
+
     def get_attachment(self, message_id: str, attachment_id: str, max_bytes: int) -> bytes:
         """One attachment (read-only scope is enough). The size is checked before and after decoding so a hostile size claim cannot exhaust memory."""
         import base64
@@ -162,8 +202,8 @@ class HttpGmailClient(GmailClient):
                 self._auth.invalidate()
                 logger.info("Gmail answered 401; refreshing the access token once")
                 continue
-            if status == 404:
-                raise GmailNotFound("not found")
+            if status == 404 or (status == 400 and "/" in path):
+                raise GmailNotFound("not found")  # Gmail answers 400 "Invalid id value" for a malformed message/thread id
             if status == 429 or (status == 403 and self._is_rate_limit(response)):
                 logger.warning("Gmail rate limited the request (attempt %d)", attempt)
                 if attempt == MAX_ATTEMPTS:

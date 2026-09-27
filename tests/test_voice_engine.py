@@ -101,9 +101,13 @@ class FakeTTS:
 class FakeAudioOutput:
     def __init__(self):
         self.played = []
+        self.warm_up_calls = 0
 
     def play(self, samples, sample_rate):
         self.played.append((samples, sample_rate))
+
+    def warm_up(self):
+        self.warm_up_calls += 1
 
 
 def _conversation(llm=None):
@@ -161,6 +165,32 @@ def test_run_once_speaks_activation_reply_then_response():
     engine.run_once()
 
     assert tts.spoken == ["Yes?", "final answer"]
+
+
+def test_run_once_warms_up_the_audio_output_before_the_wake_ack():
+    """Root cause of the "Yes?" volume complaint: the output device's cold-start latency on its first-ever play()
+    call can swallow much of a short acknowledgement. warm_up() must run once the microphone is acquired, before
+    anything is spoken, and is safely idempotent across activations (existing AudioOutput.warm_up dedupes itself)."""
+    out = FakeAudioOutput()
+    engine = VoiceEngine(
+        wakeword=FakeWakeWord(trigger_on_call=1), stt=FakeSTT("a question"), conversation=_conversation(FakeLLM(response="ok")),
+        tts=FakeTTS(), audio_input=FakeAudioInput(), audio_output=out, sample_rate=16000, listen_seconds=1.0,
+    )
+    engine.run_once()
+    assert out.warm_up_calls >= 1
+    assert out.played  # and speech still happened normally afterward
+
+
+def test_run_once_tolerates_an_audio_output_with_no_warm_up_method():
+    """Older/simpler fakes (no warm_up attribute, only play()) must not break the voice loop."""
+    class NoWarmUpOutput(FakeAudioOutput):
+        warm_up = None  # not callable: getattr(..., "warm_up", None) must fall back to "no-op", never crash
+
+    engine = VoiceEngine(
+        wakeword=FakeWakeWord(trigger_on_call=1), stt=FakeSTT("a question"), conversation=_conversation(FakeLLM(response="ok")),
+        tts=FakeTTS(), audio_input=FakeAudioInput(), audio_output=NoWarmUpOutput(), sample_rate=16000, listen_seconds=1.0,
+    )
+    engine.run_once()  # must not raise
 
 
 def test_run_once_skips_llm_when_transcript_empty():

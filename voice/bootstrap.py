@@ -59,7 +59,7 @@ from integrations.messaging.tools import MessagingTool, MessagingToolContext, bu
 from integrations.gmail.auth import GmailAuthenticator
 from integrations.gmail.client import HttpGmailClient
 from integrations.gmail.service import GmailService
-from integrations.gmail.tools import GmailTool, GmailToolContext, build_gmail_tools
+from integrations.gmail.tools import GmailReferenceTracker, GmailTool, GmailToolContext, build_gmail_tools
 from agent.memory.policy import MemoryPolicy
 from agent.memory.repository import MemoryRepository
 from agent.memory.service import MemoryService
@@ -286,9 +286,19 @@ def _project_path(value: str) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+def gmail_credentials_path(settings: Settings) -> Path:
+    """The configured client file if it exists, else the Desktop OAuth client JSON found in the secrets folder, else the configured path (reported as not configured)."""
+    from integrations.gmail.discovery import discover_client_file
+
+    configured = _project_path(settings.JARVIS_GMAIL_CREDENTIALS_PATH)
+    if configured.is_file():
+        return configured
+    return discover_client_file(_project_path(settings.JARVIS_SECRETS_DIR)) or configured
+
+
 def build_gmail_authenticator(settings: Settings) -> GmailAuthenticator:
     return GmailAuthenticator(
-        _project_path(settings.JARVIS_GMAIL_CREDENTIALS_PATH),
+        gmail_credentials_path(settings),
         _project_path(settings.JARVIS_GMAIL_TOKEN_PATH),
         settings.GMAIL_CLIENT_ID,
         settings.GMAIL_CLIENT_SECRET.get_secret_value(),
@@ -310,7 +320,7 @@ def build_gmail_service(settings: Settings, llm: LLMProvider) -> GmailService | 
 def build_gmail_tools_for(settings: Settings, llm: LLMProvider, zone) -> list[GmailTool]:
     """The read-only Gmail tools, or none when Gmail is disabled. Summaries use the same local LLM as everything else."""
     service = build_gmail_service(settings, llm)
-    return build_gmail_tools(GmailToolContext(service, zone, utcnow)) if service is not None else []
+    return build_gmail_tools(GmailToolContext(service, zone, utcnow, GmailReferenceTracker(utcnow))) if service is not None else []
 
 
 def _telegram_token_source(settings: Settings):
@@ -446,7 +456,7 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
         tasks_service = task_system.tasks if task_system is not None else None
         events_service = build_event_service(settings, zone, tasks_service)
         if gmail is not None:
-            tools += build_gmail_tools(GmailToolContext(gmail, zone, utcnow))
+            tools += build_gmail_tools(GmailToolContext(gmail, zone, utcnow, GmailReferenceTracker(utcnow)))
         tools += build_event_tools_for(
             settings, zone, tasks=tasks_service, gmail=gmail, rag=rag, memory=memory, graph=graph, events=events_service,
         )
@@ -494,6 +504,14 @@ def _build_conversation(settings: Settings, task_system: TaskSystem | None = Non
         intelligence=intelligence,
         bus=bus,
     )
+
+
+def build_conversation_engine(settings: Settings, task_system: TaskSystem | None = None, intelligence=None, bus=None) -> ConversationEngine:
+    """Public entry point to the same conversation/agent stack `build_voice_engine` uses (LLM, tools, AgentBrain,
+    PermissionManager) for a caller that is not the voice engine -- currently the dashboard chat endpoint
+    (backend/core/dashboard_chat.py). A fresh call builds a fresh, independent ConversationEngine and its own tool
+    instances; it does not share state with the voice engine's conversation, which is not thread-safe."""
+    return _build_conversation(settings, task_system, intelligence, bus)
 
 
 def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None, intelligence=None, bus=None, voice=None) -> VoiceEngine:

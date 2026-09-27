@@ -25,7 +25,13 @@ logger = get_logger(__name__)
 
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_MODEL = "openai/gpt-oss-20b"
-_MAX_RETRY_AFTER = 5.0
+# A 429 for a tokens-per-minute budget (not the request-count budget) genuinely cannot be retried sooner than the
+# window resets -- Groq's own `retry-after` says how long that really is, often close to the rest of the minute on a
+# small TPM tier. Capping the wait at only a few seconds (the old value) meant a retry fired before the budget had
+# refilled and failed again, burning the bounded retry count for nothing. A voice conversation can absorb one longer
+# pause far better than a guaranteed "I can't reach the language model": the session timeout is 120 s, so waiting up
+# to this long once is still well inside it.
+_MAX_RETRY_AFTER = 20.0
 
 
 def _safe_detail(response: httpx.Response) -> str:
@@ -69,7 +75,8 @@ class GroqProvider(LLMProvider):
     name = "groq"
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, base_url: str = DEFAULT_BASE_URL, *, timeout: float = 30.0, max_retries: int = 2, temperature: float = 0.3,
-                 max_tokens: int = 2048, reasoning_effort: str = "low", transport: httpx.BaseTransport | None = None, sleep: Callable[[float], None] = time.sleep):
+                 max_tokens: int = 2048, json_max_tokens: int = 800, reasoning_effort: str = "low", transport: httpx.BaseTransport | None = None,
+                 sleep: Callable[[float], None] = time.sleep):
         self._key = (api_key or "").strip()
         self.model = model
         self._base = base_url.rstrip("/")
@@ -77,6 +84,12 @@ class GroqProvider(LLMProvider):
         self._max_retries = max(0, max_retries)
         self._temperature = temperature
         self._max_tokens = max_tokens
+        # A structured (json_mode) call is the agent's routing decision: real replies are a few dozen tokens (see
+        # docs/GROQ_RATE_LIMITS.md), never a full answer. Every conversational turn makes exactly one of these calls,
+        # so its token budget matters for accounts on a low tokens-per-minute tier: capping it here (independent of
+        # LLM_MAX_TOKENS, which stays generous for real spoken answers) measurably reduces how fast a normal back-
+        # and-forth conversation exhausts a small TPM budget and starts genuinely rate-limiting the user.
+        self._json_max_tokens = json_max_tokens
         self._reasoning = reasoning_effort
         self._transport = transport
         self._sleep = sleep
@@ -152,7 +165,7 @@ class GroqProvider(LLMProvider):
 
     def chat(self, messages: Sequence[Message], json_mode: bool = False) -> str:
         self._require_key()
-        payload = self._payload(messages, json_mode)
+        payload = self._payload(messages, json_mode, max_tokens=self._json_max_tokens if json_mode else None)
         try:
             response = self._post("/chat/completions", payload)
         except LLMProviderError as exc:

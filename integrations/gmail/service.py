@@ -13,7 +13,18 @@ from integrations.gmail.intelligence import (
     find_action_requests,
     run_summary,
 )
-from integrations.gmail.models import EmailClassification, GmailMessage, GmailQueryError, GmailSearchResult, GmailThread
+from integrations.gmail.models import (
+    EmailClassification,
+    GmailLabel,
+    GmailMessage,
+    GmailNotFound,
+    GmailProfile,
+    GmailQueryError,
+    GmailSearchResult,
+    GmailThread,
+    GmailThreadList,
+    UnreadCounts,
+)
 from integrations.gmail.query import sanitize_query
 from backend.core.llm.base import LLMProvider
 from backend.core.logging import get_logger
@@ -71,6 +82,26 @@ class GmailService:
 
     def get_attachment(self, message_id: str, attachment_id: str, max_bytes: int) -> bytes:
         return self._client.get_attachment(message_id, attachment_id, max_bytes)
+
+    def profile(self) -> GmailProfile:
+        return self._client.profile()
+
+    def labels(self) -> list[GmailLabel]:
+        return self._client.list_labels()
+
+    def unread_counts(self) -> UnreadCounts:
+        """Exact unread counters from three label lookups (no message is downloaded): everything unread, unread in the inbox, unread and important."""
+        def unread(label_id: str) -> int:
+            try:
+                return self._client.get_label(label_id).messages_unread or 0
+            except GmailNotFound:
+                return 0
+
+        every = self._client.get_label("UNREAD")
+        return UnreadCounts(unread_total=every.messages_total or 0, inbox_unread=unread("INBOX"), important_unread=unread("IMPORTANT"))
+
+    def list_threads(self, query: str = "", max_results: int | None = None, page_token: str | None = None) -> GmailThreadList:
+        return self._client.list_threads(query, self.clamp(max_results), page_token)
 
     def get_thread(self, thread_id: str) -> GmailThread:
         return self._client.get_thread(thread_id)

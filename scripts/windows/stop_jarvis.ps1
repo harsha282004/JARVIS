@@ -8,11 +8,12 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $python = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) { throw "JARVIS is not installed here." }
 
-& $python -m desktop.launcher --stop
+$launcher = Join-Path $root "scripts\windows\jarvis_launcher.pyw"
+& $python $launcher --stop
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 do {
     $running = Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe' OR Name = 'python.exe'" |
-        Where-Object { $_.CommandLine -match "desktop\.launcher" -and $_.CommandLine -notmatch "--stop" -and $_.CommandLine -notmatch "enable-startup|disable-startup|startup-status" }
+        Where-Object { $_.CommandLine -match "jarvis_launcher\.pyw|desktop\.launcher" -and $_.CommandLine -notmatch "--stop|--status|--self-check|jarvis_status" -and $_.CommandLine -notmatch "enable-startup|disable-startup|startup-status" }
     if (-not $running) { Write-Host "JARVIS has stopped."; exit 0 }
     Start-Sleep -Milliseconds 500
 } while ((Get-Date) -lt $deadline)

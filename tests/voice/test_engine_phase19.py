@@ -456,7 +456,49 @@ def test_llm_unavailable_is_spoken_and_reported():
     with pytest.raises(LLMProviderError):
         engine.run_once()
     assert " ".join(tts.spoken).endswith(LLM_UNAVAILABLE) and "still help with reminders" in LLM_UNAVAILABLE
-    assert engine.state == VoiceState.WAITING and engine.status.snapshot()["last_error"] == "Language model unavailable"
+    assert engine.state == VoiceState.WAITING and engine.status.snapshot()["last_error"] == "Language model unavailable (unavailable)"
+
+
+@pytest.mark.parametrize("kind,expected_fragment", [
+    ("rate_limit", "rate-limited"),
+    ("timeout", "took too long"),
+    ("auth", "authentication error"),
+    ("config", "isn't configured correctly"),
+    ("model", "isn't available right now"),
+    ("server", "having trouble right now"),
+    ("network", "network problem"),
+    ("bad_response", "couldn't use"),
+])
+def test_llm_error_kind_gets_its_own_honest_spoken_message_not_the_generic_unavailable_text(kind, expected_fragment):
+    """Root cause of the reported "sometimes I can't reach the language model" complaint being investigated: a real,
+    transient Groq rate limit is genuinely being hit under real usage -- but every LLMProviderError kind was reported
+    with the exact same "I can't reach my language model" text, making a five-second rate limit indistinguishable from
+    a broken API key. Each kind must now say something specific and true."""
+
+    class Down(FakeConversation):
+        def respond(self, text):
+            raise LLMProviderError("boom", kind=kind)
+
+    tts = RecordingTTS()
+    engine, _ = build(stt=ScriptedSTT("tell me a joke"), conv=Down(), tts=tts)
+    with pytest.raises(LLMProviderError):
+        engine.run_once()
+    spoken = " ".join(tts.spoken)
+    assert expected_fragment in spoken
+    assert spoken != " ".join(["Yes?", LLM_UNAVAILABLE])              # never the generic message for a classified kind
+    assert engine.status.snapshot()["last_error"] == f"Language model unavailable ({kind})"
+
+
+def test_unrecognized_llm_error_kind_falls_back_to_the_generic_message():
+    class Down(FakeConversation):
+        def respond(self, text):
+            raise LLMProviderError("boom", kind="some_future_kind_not_yet_mapped")
+
+    tts = RecordingTTS()
+    engine, _ = build(stt=ScriptedSTT("tell me a joke"), conv=Down(), tts=tts)
+    with pytest.raises(LLMProviderError):
+        engine.run_once()
+    assert " ".join(tts.spoken).endswith(LLM_UNAVAILABLE)
 
 
 def test_speaking_while_jarvis_talks_then_silence_does_not_deadlock():

@@ -67,6 +67,16 @@ ACTION_RESPONSE = (
     "I understand what you're asking, but I can't carry out actions like that yet."
 )
 UNSUPPORTED_RESPONSE = "Sorry, I can't help with that."
+# A specific, honest reason beats this generic filler whenever one is known (see `_action_decision`): it is now used
+# only when the model classified action_request but named no tool at all in a domain that has no honest reason to give
+# (should be rare after the retry in `decide()` below; kept as the last-resort text, never a false "language model
+# unavailable" -- that message is reserved for an actual LLMProviderError, never a tool/routing outcome).
+_DOMAIN_LABEL = {
+    "gmail": "Gmail", "calendar": "Google Calendar", "messaging": "Your messaging account",
+}
+_ACTION_NAME_SETS = (
+    ("gmail", GMAIL_ACTION_NAMES), ("calendar", CALENDAR_ACTION_NAMES), ("messaging", MESSAGE_ACTION_NAMES),
+)
 # Placeholder only: ConversationEngine replaces it with the grounded answer (or an honest unavailable message).
 DOCUMENT_LOOKUP_RESPONSE = "Let me check your documents."
 FALLBACK_RESPONSE = "Sorry, I had trouble working that out. Could you say it again?"
@@ -165,6 +175,13 @@ class AgentBrain:
                 confidence=output.confidence,
                 reasoning_summary=output.summary,
             )
+        if output.action is None and not output.tools:
+            # action_request with literally nothing to act on: the model's JSON parsed fine but is incomplete for this
+            # intent. This used to become a permanent, uninformative "I can't carry out actions like that yet." even
+            # for an ordinary question the model could answer fine (e.g. "what's my last email?" occasionally lands
+            # here under load) -- one retry with the existing repair prompt resolves most of these; MAX_ATTEMPTS still
+            # bounds the cost.
+            raise InvalidAgentOutput("action_request intent named no action and no tools")
         return self._action_decision(output, request)
 
     def _action_decision(self, output: LLMDecisionOutput, request: AgentRequest) -> AgentDecision:
@@ -186,11 +203,19 @@ class AgentBrain:
             tools=[s.name for s in selections],
             requires_permission=requires_permission,
         )
+        response = ACTION_RESPONSE
+        if proposed is None:
+            # The model named a real action, but every domain it could belong to has no matching tool registered
+            # right now (that integration is turned off / not connected) -- an honest, specific reason instead of the
+            # generic filler (Phase 3: GMAIL_NOT_CONNECTED and friends, spoken in plain language).
+            unavailable = self._unavailable_domain(output.action)
+            if unavailable is not None:
+                response = f"{unavailable} isn't connected right now, so I can't do that."
         return AgentDecision(
             intent=Intent.ACTION_REQUEST,
             action_required=True,
             plan=plan,
-            response=ACTION_RESPONSE,
+            response=response,
             selected_tools=selections,
             requires_permission=requires_permission,
             confidence=output.confidence,
@@ -237,6 +262,20 @@ class AgentBrain:
         except (InvalidTaskAction, InvalidGmailAction, InvalidEventAction, InvalidCalendarAction, InvalidMessageAction, InvalidProactiveAction, InvalidBriefingAction) as exc:
             raise InvalidAgentOutput(f"invalid action ({exc})") from None
         return (task if task.name.value in catalog else None), None, None, None, None, None, None
+
+    @staticmethod
+    def _unavailable_domain(action: dict | None) -> str | None:
+        """The user-facing label for `action`'s domain (Gmail/Google Calendar/messaging) if it named one of the
+        integrations that can legitimately be turned off or not connected, else None. Used only to explain why a
+        recognized action produced nothing (never to guess at an action that was never named)."""
+        name = (action or {}).get("name")
+        if not isinstance(name, str):
+            return None
+        low = name.strip().lower()
+        for domain, names in _ACTION_NAME_SETS:
+            if low in names:
+                return _DOMAIN_LABEL[domain]
+        return None
 
     @staticmethod
     def _select(name: str, catalog: dict[str, ToolDescriptor]) -> ToolSelection:

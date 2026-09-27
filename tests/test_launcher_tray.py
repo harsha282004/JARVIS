@@ -100,12 +100,15 @@ def test_application_runs_headless_without_tray():
     assert manager.calls == ["start", "shutdown"]
 
 
-def test_tray_failure_aborts_startup_without_starting_engine():
+def test_tray_failure_does_not_stop_startup_and_the_runtime_still_starts():
+    """The tray is optional: right after logon the taskbar may not exist yet. It used to abort the whole process (exit code 1, no voice engine); now the runtime
+    starts anyway, the tray is marked `retrying`, and JARVIS exits only on an explicit request."""
     manager, tray, exit_event = FakeManager(), FakeTray(fail=True), threading.Event()
     app = JarvisApplication(manager, exit_event, tray=tray)
-    assert app.run() == 1
-    assert "start" not in manager.calls
-    assert "shutdown" in manager.calls
+    exit_event.set()
+    assert app.run() == 0
+    assert manager.calls == ["start", "shutdown"]
+    assert app.tray_status == "retrying"
 
 
 def test_parse_args_defaults_to_running_runtime():

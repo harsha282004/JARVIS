@@ -20,6 +20,7 @@ def settings(tmp_path=None, **overrides) -> Settings:
     }
     if tmp_path is not None:
         base["JARVIS_GMAIL_CREDENTIALS_PATH"] = str(tmp_path / "credentials.json")
+        base["JARVIS_SECRETS_DIR"] = str(tmp_path / "secrets")
         base["JARVIS_GMAIL_TOKEN_PATH"] = str(tmp_path / "token.json")
     base.update(overrides)
     return Settings(_env_file=None, **base)
@@ -70,7 +71,7 @@ def test_missing_credentials_give_a_clear_setup_message_and_touch_nothing(tmp_pa
     engine = _build_conversation(cfg, None)
     action = parse_gmail_action({"name": "gmail_search", "arguments": {"query": "is:unread"}})
     outcome = engine._actions.execute(action, "session-1")
-    assert "Gmail isn't set up yet" in outcome.reply and "gmail_cli.py auth" in outcome.reply and not outcome.executed
+    assert "Gmail OAuth credentials not configured." in outcome.reply and "gmail_cli.py auth" in outcome.reply and not outcome.executed
     assert list(tmp_path.iterdir()) == []  # no file was created
 
 
@@ -86,6 +87,7 @@ def test_cli_status_reports_missing_files_without_secrets(tmp_path, monkeypatch,
 
     monkeypatch.setenv("JARVIS_GMAIL_CREDENTIALS_PATH", str(tmp_path / "credentials.json"))
     monkeypatch.setenv("JARVIS_GMAIL_TOKEN_PATH", str(tmp_path / "token.json"))
+    monkeypatch.setenv("JARVIS_SECRETS_DIR", str(tmp_path / "no-secrets"))
     get_settings.cache_clear()
     try:
         spec = importlib.util.spec_from_file_location("gmail_cli", Path(__file__).resolve().parents[1] / "scripts" / "gmail_cli.py")

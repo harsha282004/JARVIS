@@ -104,9 +104,48 @@ def test_registered_tool_without_permission_requirement_does_not_flag_permission
     assert [s.kind for s in d.plan.steps] == [StepKind.PREPARE, StepKind.EXECUTE]
 
 
-def test_action_with_no_tools_named_still_requires_permission():
-    brain, _ = make(out("action_request"))
-    assert decide(brain).requires_permission is True
+def test_action_with_no_tools_named_is_retried_then_safely_falls_back():
+    """A bare action_request naming no action and no tools used to be accepted as a final decision (still
+    conservatively requiring permission, so nothing could execute). It is now retried once, like any other malformed
+    output (a real model does sometimes classify action_request without actually naming an action -- see brain.py) --
+    but if the model repeats the same vague reply, the outcome is still safe: no action, no plan, no permission to
+    grant, nothing that could execute."""
+    brain, llm = make(out("action_request"), out("action_request"))
+    decision = decide(brain)
+    assert len(llm.calls) == 2
+    assert decision.intent is Intent.CONVERSATION and decision.action_required is False
+    assert decision.plan is None and decision.selected_tools == [] and decision.requires_permission is False
+    assert decision.response == FALLBACK_RESPONSE
+
+
+def test_action_with_no_tools_named_that_self_corrects_on_retry_still_requires_permission():
+    """The common case in practice: the first reply is vague, the repair prompt gets the model to actually name a
+    tool on the second attempt -- and the usual fail-safe (permission required for an unrecognized tool) still
+    applies."""
+    brain, llm = make(out("action_request"), out("action_request", tools=["unknown_tool"]))
+    decision = decide(brain)
+    assert len(llm.calls) == 2
+    assert decision.intent is Intent.ACTION_REQUEST and decision.requires_permission is True
+    assert decision.missing_tools == ["unknown_tool"]
+
+
+def test_unavailable_gmail_action_gives_an_honest_reason_not_the_generic_filler():
+    """Root cause fix: the model correctly named a real Gmail action (e.g. "what's my last email?" ->
+    gmail_get_message/latest), but Gmail is not among the registered tools (disabled / not connected). Previously
+    this silently returned the generic ACTION_RESPONSE ("I can't carry out actions like that yet.") with no hint of
+    why -- indistinguishable from a genuinely unsupported request. It must now name Gmail specifically."""
+    brain, _ = make(out("action_request", action={"name": "gmail_get_message", "arguments": {"latest": True}}))
+    decision = decide(brain, "What's the last mail I received?")
+    assert decision.gmail_action is None and decision.intent is Intent.ACTION_REQUEST
+    assert decision.response == "Gmail isn't connected right now, so I can't do that."
+
+
+def test_available_gmail_action_is_carried_through_normally():
+    gmail_tool = ToolDescriptor(name="gmail_get_message", description="Read a Gmail message", requires_permission=True)
+    brain, _ = make(out("action_request", action={"name": "gmail_get_message", "arguments": {"latest": True}}), tools=[gmail_tool])
+    decision = decide(brain, "What's the last mail I received?")
+    assert decision.gmail_action is not None and decision.gmail_action.name.value == "gmail_get_message"
+    assert decision.response == ACTION_RESPONSE  # unchanged for the normal, successful path
 
 
 def test_mixed_known_and_unknown_tools_require_permission():

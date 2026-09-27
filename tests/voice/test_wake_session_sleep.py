@@ -256,9 +256,14 @@ def test_a_fresh_manual_request_activates_once():
 
 def test_the_acknowledgement_can_only_follow_a_validated_wake_event():
     src = (ROOT / "voice" / "engine.py").read_text(encoding="utf-8")
-    assert src.count("self._activation_reply") == 2                          # stored once, spoken once
-    spoken = src.index("self._speak(self._activation_reply")
-    assert src.rindex("wake = self._last_wake", 0, spoken) > src.rindex("def _run_once", 0, spoken)
+    # Stored once, and spoken from exactly two places: the initial validated wake in `_run_once`, and the re-said wake phrase
+    # inside `_converse` (only reachable once a conversation is already open, and only for an exact `confirm_phrase` match --
+    # never spontaneously).
+    assert src.count("self._activation_reply") == 3
+    first_spoken = src.index("self._speak(self._activation_reply")
+    assert src.rindex("wake = self._last_wake", 0, first_spoken) > src.rindex("def _run_once", 0, first_spoken)
+    second_spoken = src.index("self._speak(self._activation_reply", first_spoken + 1)
+    assert src.rindex("confirm_phrase(text)", 0, second_spoken) > src.rindex("def _converse", 0, second_spoken)
     assert "ACTIVATION_WITHOUT_VALIDATED_WAKE" in src
 
 
@@ -317,6 +322,18 @@ def test_wake_starts_a_session_and_follow_ups_need_no_wake_word():
     engine.run_once()
     assert conv.received == ["first question", "second question"] and tts.spoken.count("Yes?") == 1
     assert wake.calls <= 3                                                   # the wake model was not consulted again during the conversation
+
+
+def test_repeating_the_wake_phrase_mid_conversation_gets_a_second_yes_not_silence():
+    """Root cause reproduction: "JARVIS" (or "Hey JARVIS") said again during an open follow-up window used to normalize to an
+    empty string (normalize.py strips the wake word) and fall through to a silent miss -- LISTENING_STARTED/STT activity with
+    no reply at all, exactly the reported bug. It must instead say "Yes?" again, once, and keep listening."""
+    conv, tts = FakeConversation("Here."), RecordingTTS()
+    mic = ScriptedMic(*silence(3), *UTT, *UTT, *UTT)
+    engine = build(mic=mic, wake=ScoredWake(0.0, 0.92, 0.95), stt=ScriptedSTT("JARVIS.", "Hey JARVIS", "what can you do"), conv=conv, tts=tts, timeout=10.0)
+    engine.run_once()
+    assert conv.received == ["what can you do"]                              # the bare wake phrases never reached the agent
+    assert tts.spoken == ["Yes?", "Yes?", "Yes?", "Here."]                    # one wake ack, then one ack per re-said wake phrase, then the real answer
 
 
 def test_the_session_times_out_after_120_seconds_of_inactivity_and_says_nothing():

@@ -43,6 +43,8 @@ class FakeAuth:
     def __init__(self, ready=True):
         self.ready, self.authorized, self.forgotten, self.revoked, self.fail = ready, 0, 0, 0, None
 
+    has_client_config = True
+
     def is_ready(self):
         return self.ready
 

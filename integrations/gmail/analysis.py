@@ -124,7 +124,9 @@ def analyze_email(message: GmailMessage, extractor: TextExtractor, now: datetime
     cls = classify(message)
     topic, topic_rule = classify_topic(message, cls.category)
     body = strip_quoted_reply(message.plain_text_body or message.snippet)
-    scan = scan_for_injection(f"{message.subject}\n{body[:20_000]}")
+    # Every attacker-controlled field is scanned, not just the text we read: the sender's display name, attachment file names and the HTML part (where hidden text lives).
+    hidden = "\n".join([message.sender.name if message.sender else "", *[a.filename for a in message.attachments[:20]], (message.html_body or "")[:20_000]])
+    scan = scan_for_injection(f"{message.subject}\n{body[:20_000]}\n{hidden}")
     outcome = extractor.extract(
         body, source_type=SourceKind.EMAIL, source_id=message.message_id, label=f"email '{message.subject[:60]}'", source_timestamp=message.timestamp,
         subject=message.subject,

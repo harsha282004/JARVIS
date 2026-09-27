@@ -2,7 +2,9 @@
 
 import ctypes
 import os
+import shutil
 import sys
+import threading
 import time
 from ctypes import wintypes
 
@@ -49,3 +51,38 @@ class CpuMeter:
 
 def pid() -> int:
     return os.getpid()
+
+
+_cpu_meter = CpuMeter()
+_cpu_lock = threading.Lock()
+_cpu_meter.start()
+_last_cpu_percent: float | None = None
+
+
+def cpu_percent() -> float | None:
+    """This process's CPU use (percent of one core) since the last call (or since startup, for the first call).
+    Dashboard.html's System Resources card polls this every few seconds, which is exactly the window this measures --
+    never a fabricated number, and never a blocking sleep in the request thread."""
+    global _last_cpu_percent
+    with _cpu_lock:
+        try:
+            _last_cpu_percent = _cpu_meter.stop()
+        except Exception:  # noqa: BLE001 - a measurement failure must not break the dashboard; report the last known value
+            pass
+        finally:
+            _cpu_meter.start()
+    return _last_cpu_percent
+
+
+def disk_usage_percent(path: str | None = None) -> dict | None:
+    """Real disk usage (percent used, free GB) for the drive holding `path` (default: this project's own root, i.e.
+    the drive JARVIS itself runs from). None if it cannot be read."""
+    try:
+        target = path or os.path.dirname(os.path.abspath(__file__))
+        usage = shutil.disk_usage(target)
+    except OSError:
+        return None
+    if usage.total <= 0:
+        return None
+    return {"percent_used": round(100.0 * usage.used / usage.total, 1), "free_gb": round(usage.free / (1024 ** 3), 1),
+            "total_gb": round(usage.total / (1024 ** 3), 1)}

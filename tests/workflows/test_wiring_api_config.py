@@ -134,6 +134,7 @@ def test_workflow_api_lifecycle(api):
     status = client.get(f"/workflows/{wid}/status", headers=hdr(ctx)).json()
     assert status["status"] == "COMPLETED"
     assert client.get("/workflows/nope", headers=hdr(ctx)).status_code == 404
+    assert rig.wait(lambda: rig.store.history(1))                     # the runner records history in its finally block, a moment after the workflow is terminal
     snap = client.get("/workflows", headers=hdr(ctx)).json()
     assert snap["history"][0]["workflow_id"] == wid and set(snap["systems"]) >= {"gmail", "calendar", "github", "tasks"} and snap["limits"]["max_steps"] == 14
     dump = json.dumps(snap) + json.dumps(detail)

@@ -19,6 +19,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +82,10 @@ def check_voice(args, token: str, report: dict, work: Path) -> None:
             time.sleep(0.5)
         report["voice_after_activation"] = {k: after.get(k) for k in ("state", "microphone", "tts_state", "wake_word", "last_error", "latency_ms", "interruptions")}
         checks["voice_manual_activation"] = bool(activated) and after["wake_word"]["activations"] >= 1
-        checks["voice_returned_to_idle"] = after["voice_state"] == "waiting" and after["tts_state"] in ("TTS_IDLE", "TTS_INTERRUPTED")
+        # Since the 120 s voice session, an activation that heard real speech (a person or a TV in the room) legitimately stays in the conversation (listening/transcribing/
+        # thinking) instead of dropping back to "waiting" after ~10 s of silence: the check is that the voice runtime is healthy and not stuck speaking.
+        checks["voice_returned_to_idle"] = (after["voice_state"] in ("waiting", "listening", "transcribing", "thinking") and after["tts_state"] in ("TTS_IDLE", "TTS_INTERRUPTED")
+                                            and after.get("last_error") is None)
         report["voice_log_tail"] = [{k: e.get(k) for k in ("event", "state", "result", "latency_ms")} for e in json.loads(http(args.port, "/voice/log?limit=8", token))["events"]]
 
 
@@ -177,14 +181,23 @@ def main() -> int:
         print(json.dumps({"checks": {"database_migrated": False}, "alembic_error": migrated.stderr[-500:]}, indent=2))
         return 1
 
+    # JARVIS_INSTANCE_ID gives this run its own single-instance mutex and exit-signal namespace (desktop/launcher/single_instance.py). Without it, this
+    # throwaway test instance would share the same OS-level names as a real JARVIS the person has running, and this script's own `--stop` cleanup below
+    # would shut down THEIR live assistant instead of (or as well as) the one it started here. See docs/TROUBLESHOOTING.md ("the tray icon disappeared
+    # after running a diagnostic script") for exactly what that looked like.
+    instance_id = f"e2e-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     env = {**os.environ, "DATABASE_URL": f"sqlite:///{db.as_posix()}", "JARVIS_STATE_DIR": str(work / "state"), "API_PORT": str(args.port),
+           "JARVIS_INSTANCE_ID": instance_id,
            "JARVIS_PRIVACY_DEFAULT": args.privacy, "JARVIS_TRAY_ENABLED": "false" if args.no_tray else "true", "JARVIS_LOG_JSON": "true",
            "JARVIS_GMAIL_ENABLED": "false", "JARVIS_CALENDAR_ENABLED": "false", "JARVIS_MESSAGING_ENABLED": "false", "JARVIS_PROACTIVE_ENABLED": "false", "BROWSER_HEADLESS": "true"}
     started = time.perf_counter()
     log_path = work / "console.log"
     log_handle = log_path.open("wb")  # a file, not a pipe: an unread pipe fills up and blocks the process
-    proc = subprocess.Popen([sys.executable, "-m", "desktop.launcher"], cwd=ROOT, env=env, stdout=log_handle, stderr=subprocess.STDOUT,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    # Started exactly the way Windows starts it: the launcher SCRIPT, from a foreign working directory (a Task Scheduler action / Run entry starts in System32), with the
+    # startup source recorded. `python -m desktop.launcher` cannot start from there, which is what used to make an auto-started JARVIS vanish.
+    foreign_cwd = Path(tempfile.mkdtemp(prefix="jarvis-e2e-cwd-"))
+    proc = subprocess.Popen([sys.executable, str(ROOT / "scripts" / "windows" / "jarvis_launcher.pyw"), "--startup-source", "windows"], cwd=foreign_cwd, env=env,
+                            stdout=log_handle, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     report: dict = {"privacy": args.privacy, "checks": {}}
     token = ""
     try:
@@ -247,6 +260,9 @@ def main() -> int:
             report["checks"]["browser_closed_on_shutdown"] = left == 0
         log_handle.close()
         output = log_path.read_text(encoding="utf-8", errors="replace")
+        app_log = (ROOT / "logs" / "jarvis.log").read_text(encoding="utf-8", errors="replace")[-60000:]
+        report["checks"]["started_like_windows_from_foreign_cwd"] = report["checks"].get("api_up", False) and "STARTUP_SOURCE=windows" in app_log
+        report["checks"]["shutdown_reason_recorded"] = "SHUTDOWN_REASON=user_exit" in app_log and "JARVIS_RUNTIME_RUNNING" in app_log
         report["log_lines"] = len(output.splitlines())
         report["errors_in_log"] = [line[:200] for line in output.splitlines() if '"severity": "ERROR"' in line or '"severity": "CRITICAL"' in line][:10]
         try:

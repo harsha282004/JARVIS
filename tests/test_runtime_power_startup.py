@@ -65,6 +65,23 @@ def test_watcher_thread_starts_and_stops():
     watcher.stop()
 
 
+class NoRegistry:
+    """A stand-in for the HKCU Run key: these tests must never read or change the user's real start-with-Windows settings."""
+
+    def get(self, name):
+        return None
+
+    def set(self, name, value):
+        raise AssertionError("not used")
+
+    def delete(self, name):
+        return False
+
+
+def hermetic(**kw):
+    return StartupManager(registry=NoRegistry(), query=lambda command, env: "no", **kw)
+
+
 class FakeRunner:
     def __init__(self, create=True):
         self.calls = []
@@ -77,7 +94,7 @@ class FakeRunner:
 
 
 def test_startup_disabled_by_default(tmp_path):
-    manager = StartupManager(startup_dir=tmp_path, runner=FakeRunner())
+    manager = hermetic(startup_dir=tmp_path, runner=FakeRunner())
     assert manager.is_enabled() is False
     assert not (tmp_path / SHORTCUT_NAME).exists()
 
@@ -86,9 +103,7 @@ def test_startup_enable_and_disable(tmp_path):
     runner = FakeRunner()
     project = tmp_path / "proj dir"
     project.mkdir()
-    manager = StartupManager(
-        startup_dir=tmp_path / "Startup", project_root=project, target=Path("py.exe"), runner=runner
-    )
+    manager = hermetic(startup_dir=tmp_path / "Startup", project_root=project, target=Path("py.exe"), runner=runner)
 
     shortcut = manager.enable()
 
@@ -96,7 +111,7 @@ def test_startup_enable_and_disable(tmp_path):
     assert manager.is_enabled()
     _, env = runner.calls[0]
     assert env["JARVIS_TARGET"] == "py.exe"
-    assert env["JARVIS_ARGS"] == "-m desktop.launcher"
+    assert env["JARVIS_ARGS"] == f'"{project / "scripts" / "windows" / "jarvis_launcher.pyw"}" --startup-source windows'    # the cwd-independent launcher script
     assert env["JARVIS_CWD"] == str(project)
 
     assert manager.disable() is True
@@ -105,7 +120,7 @@ def test_startup_enable_and_disable(tmp_path):
 
 
 def test_startup_enable_fails_clearly_if_shortcut_not_created(tmp_path):
-    manager = StartupManager(startup_dir=tmp_path, runner=FakeRunner(create=False))
+    manager = hermetic(startup_dir=tmp_path, runner=FakeRunner(create=False))
     with pytest.raises(StartupIntegrationError, match="not created"):
         manager.enable()
 

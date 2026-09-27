@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 RANGES: dict[str, tuple[float, float]] = {
     "wake_sensitivity": (0.05, 0.99),
     "tts_speed": (0.5, 2.0),
-    "tts_volume": (0.0, 1.0),
+    "tts_volume": (0.0, 2.0),  # above 1.0 amplifies (soft-clipped: voice.audio._MAX_GAIN/_soft_clip); a measured, safe gain, not attenuation-only
     "silence_seconds": (0.3, 5.0),
     "max_utterance_seconds": (2.0, 60.0),
     "min_utterance_seconds": (0.1, 3.0),
@@ -33,6 +33,7 @@ RANGES: dict[str, tuple[float, float]] = {
 
 @dataclass
 class VoiceSettings:
+    voice_enabled: bool = True             # the JARVIS voice ON/OFF switch (tray/dashboard/API); OFF = microphone released, no wake/VAD/STT running; persisted
     wake_word: str = "hey_jarvis"
     wake_sensitivity: float = 0.5          # openWakeWord score threshold; higher = fewer false activations
     microphone: str = ""                   # "" = system default

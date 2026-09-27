@@ -204,3 +204,74 @@ out/in; a spoken "Hey JARVIS" round trip through the runtime.
   user's microphone and audio devices).
 - Phase 1 limits still apply (fixed listening window). Restarting the runtime
   discards the in-memory conversation (pause/resume keeps it).
+
+
+---
+
+# Windows auto-start and persistent runtime (hardened)
+
+## What was wrong (root causes, each reproduced)
+1. **`python -m desktop.launcher` only works when the working directory is the project.** Windows starts a Run entry (which cannot even set a working directory) and a Task Scheduler action in `System32` or the user profile. From there the interpreter answers `No module named 'desktop'` and exits with code 1 - and `pythonw.exe` has no console, so **nothing was logged and JARVIS simply disappeared**. Reproduced by starting `pythonw -m desktop.launcher` with `C:\Windows\System32` as the working directory.
+2. `.env` was discovered relative to the working directory at import time (`backend/core/database.py` reads the settings before `main()` changes directory).
+3. A tray icon that could not be created right after logon (Explorer's taskbar not ready) **ended the whole process** before the voice engine started.
+4. Nothing recorded *why* the process stopped (`Shutdown requested` was logged without a reason), uncaught exceptions under `pythonw` were lost, and a Windows logoff/shutdown was never recognised.
+5. The microphone was retried every 2 s forever, and a duplicate start exited with a failure code (which a "restart on failure" policy would treat as a crash).
+
+A manual start from a terminal, from VS Code or with `start_jarvis.ps1` **did** keep running (verified: minutes alive, clean `--stop`), which is why it looked fine during development.
+
+## Startup architecture
+```
+Windows logon
+  -> Task Scheduler task "JARVIS" (per user, no admin; +20 s delay; MultipleInstances=IgnoreNew; restart 5x/1 min on FAILURE; no time limit)
+       (fallbacks: HKCU Run entry, Startup-folder shortcut - exactly ONE mechanism is ever active)
+  -> <project>\.venv\Scripts\pythonw.exe <project>\scripts\windows\jarvis_launcher.pyw --startup-source windows
+  -> desktop.launcher.entry.run()   chdir + sys.path from the file's own location, stdio guard, excepthooks, crash log
+  -> cli.main()                     config (.env resolved from the project, not the cwd) -> logging -> SingleInstanceGuard -> ExitCoordinator + signal/console/session handlers
+  -> JarvisApplication.run()        tray (TrayKeeper: never fatal, retries) -> power watcher -> scheduler -> RuntimeManager/VoiceEngine -> API + health + supervisor + intelligence
+       the main thread blocks on the exit event until an explicit, reasoned stop request
+```
+**Task Scheduler rather than Run:** a Run entry has no working directory, no delay (audio, taskbar and network may not be ready), no restart policy and no duplicate protection. The task has all four, still needs no administrator rights (`RunLevel Limited`, interactive token), and a failure exits non-zero so Windows restarts it, while a deliberate exit (tray Exit, `--stop`, Windows shutdown) and a duplicate start exit with **0** and are never restarted. If Task Scheduler is unavailable (policy), `--enable-startup` falls back to the Run entry automatically.
+
+## Lifetime rules (regression tests: `tests/desktop/test_startup_hardening.py`)
+- The application never falls through to the end of `main()`: the main thread waits on the exit event; no background thread keeps it alive.
+- **Only an explicit stop request ends it, and every request has a reason**, logged as `JARVIS_SHUTDOWN_REQUESTED SHUTDOWN_REASON=<reason> DETAIL=...`: `user_exit` (tray Exit, `--stop`), `ctrl_c`, `windows_shutdown` (logoff, shutdown, restart: a real top-level window receives `WM_QUERYENDSESSION`/`WM_ENDSESSION`; console runs use the console control handler), `startup_failure`, `unexpected_exception` (stack trace, redacted, also in `logs\jarvis-crash.log`), `fatal_error`, `restart`. The first reason wins.
+- **Optional parts never end the process:** the tray (retried with 2, 4, 8, 15, 30 s backoff until the taskbar exists), power watcher, scheduler, background services, the voice runtime (auto-restarted by the supervisor), the database, Groq and integrations are shown degraded instead.
+- **Audio not ready at boot:** bounded exponential retry 2, 4, 8, 16, 30 s (capped, never a tight loop); the moment the microphone appears it is used.
+- **Single instance:** a per-session named mutex. Windows auto-start plus a manual `start_jarvis.ps1` never create two runtimes: the second start logs `JARVIS_ALREADY_RUNNING`, changes nothing and exits 0.
+- **Voice at boot:** `STARTING -> RUNNING -> WAITING`; the microphone listens for the wake word only. Nothing at boot, reconnect, health check or a stale tray/API request can produce a "Yes?": it is only reachable through a validated wake ("Hey JARVIS" / "JARVIS", see `docs/VOICE_ARCHITECTURE.md`).
+
+## Startup log (no secrets)
+`JARVIS_STARTING STARTUP_SOURCE=windows PROJECT_ROOT=... PYTHON_EXECUTABLE=... PID=... PARENT_PID=... ENVIRONMENT=... CONFIG_STATUS=ok LLM_STATUS=groq:openai/gpt-oss-20b api_key=configured`, `DATABASE_STATUS=ready`, `TRAY_STATUS=running`, `JARVIS_RUNTIME_RUNNING`, and once the voice runtime is up `STARTUP_REPORT TRAY_STATUS=... VOICE_STATUS=... MICROPHONE_STATUS=... WAKE_LISTENER=... DEGRADED=...`.
+
+## Commands
+```powershell
+# start (from anywhere; does nothing if JARVIS is already running)
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\start_jarvis.ps1
+# stop gracefully (releases the microphone and the port; never force-kills)
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\stop_jarvis.ps1     # or tray -> Exit, or Ctrl+C when run in a terminal
+# status of everything (safe to repeat)
+.\.venv\Scripts\python.exe scripts\jarvis_status.py [--json]
+# verify configuration and paths without starting anything, from any directory
+.\.venv\Scripts\python.exe scripts\windows\jarvis_launcher.pyw --self-check
+# start with Windows
+.\.venv\Scripts\python.exe scripts\windows\jarvis_launcher.pyw --enable-startup [--startup-method task|run|shortcut]
+.\.venv\Scripts\python.exe scripts\windows\jarvis_launcher.pyw --startup-status
+.\.venv\Scripts\python.exe scripts\windows\jarvis_launcher.pyw --disable-startup
+Get-ScheduledTask -TaskName JARVIS | Get-ScheduledTaskInfo      # LastRunTime, LastTaskResult (0 = ok)
+Get-Process pythonw,python | Select Id,ProcessName,StartTime,Path
+Get-Content .\logs\jarvis.log -Tail 60                          # the main log
+Get-Content .\logs\jarvis-crash.log -Tail 60                    # only written when something unexpected happened
+```
+
+## Troubleshooting after a reboot
+| Symptom | Check |
+|---|---|
+| JARVIS is not running after logon | `jarvis_status.py`; `--startup-status` (exactly one mechanism?); `Get-ScheduledTaskInfo` (LastTaskResult); `logs\jarvis-crash.log`; the first `JARVIS_STARTING` line of `logs\jarvis.log` |
+| No tray icon | `TRAY_STATUS=` in the log: `retrying` = the taskbar was not ready yet, it keeps retrying; a tray failure never stops JARVIS |
+| No voice | `STARTUP_REPORT MICROPHONE_STATUS=`; Windows Settings > Privacy > Microphone; `scripts/voice_real_check.py --mic-only --mic` |
+| It stopped by itself | the last `SHUTDOWN_REASON=` in `logs\jarvis.log` (`jarvis_status.py` shows it) |
+| Two copies | not possible: the second exits 0 with `JARVIS_ALREADY_RUNNING`; `--startup-status` warns if two auto-start mechanisms are registered |
+| You moved the project or recreated `.venv` | run `--enable-startup` again (the registration stores the interpreter and script paths) |
+
+## Limitations
+A Windows *reboot* is not performed by the automated verification (it would end the session): the manual procedure is in `docs/IMPLEMENTATION_LOG.md`. `python -m desktop.launcher` still needs the project directory as working directory (an interpreter limitation) and is now for manual use only; everything Windows runs uses the launcher script.

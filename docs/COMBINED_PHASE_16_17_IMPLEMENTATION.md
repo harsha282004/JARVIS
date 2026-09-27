@@ -34,7 +34,7 @@ The existing custom AgentBrain was kept (the repository does not use LangGraph; 
 
 | Requirement | Status |
 |---|---|
-| Windows startup without VS Code | Startup shortcut (existing) or Scheduled Task with restart-on-failure (`install_jarvis.ps1 -UseScheduledTask`). Scripts syntax-checked; **not executed end-to-end** (see limitations). |
+| Windows startup without VS Code | Startup shortcut (existing) or Scheduled Task with restart-on-failure (`install_jarvis.ps1` (Task Scheduler is now the default; see docs/windows-runtime.md)). Scripts syntax-checked; **not executed end-to-end** (see limitations). |
 | Tray | New menu: status, microphone state, Talk, Briefing, Tasks, Reminders, Memory, Integrations, Settings, Pause/Resume, Private mode, Restart, Exit. Items whose service is off are greyed out. |
 | Health monitor | 12 services with states healthy/starting/degraded/disconnected/failed/disabled; overall online/starting/degraded/offline. Verified against the real process. |
 | Automatic recovery | Supervisor restarts an `ERROR` voice runtime with exponential backoff, gives up after N attempts, retries after a cooldown. Integrations recover on the next successful call; their health re-check backs off 15 s -> 5 min. |

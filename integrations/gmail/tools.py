@@ -42,6 +42,40 @@ from integrations.gmail.text import one_line, sanitize_for_prompt, strip_quoted_
 MAX_SPOKEN_ITEMS = 5
 READ_ALOUD_CHARS = 500
 PLACEHOLDER = "[Gmail results were read to the user. Email content is deliberately not kept in the conversation history.]"
+_REFERENCE_TTL_SECONDS = 600  # a "what was it about?" ten minutes later is not "it" anymore; ask again instead of guessing
+
+
+class GmailReferenceTracker:
+    """Remembers, per conversation session, the id of the last email a Gmail tool actually resolved -- so a follow-up
+    like "What was it about?" or "Who sent it?" (Phase 10: multi-turn) can refer back to it without the user repeating
+    the sender or subject. Only an opaque (message_id, thread_id) pair is kept, never any content: the email's text
+    still never re-enters the conversation history or this model's context (see `history_placeholder` above), and a
+    follow-up re-fetches the message fresh from Gmail by id rather than reusing anything cached from before."""
+
+    def __init__(self, clock: Any, ttl_seconds: float = _REFERENCE_TTL_SECONDS):
+        self._clock = clock
+        self._ttl = ttl_seconds
+        self._last: dict[str, tuple[str, float]] = {}  # session_id -> (message_id, expires_at)
+
+    def remember(self, session_id: str | None, message_id: str) -> None:
+        if session_id:
+            self._last[session_id] = (message_id, self._clock().timestamp() + self._ttl)
+
+    def recall(self, session_id: str | None) -> str | None:
+        if not session_id:
+            return None
+        entry = self._last.get(session_id)
+        if entry is None:
+            return None
+        message_id, expires_at = entry
+        if self._clock().timestamp() > expires_at:
+            del self._last[session_id]
+            return None
+        return message_id
+
+    def forget(self, session_id: str | None) -> None:
+        if session_id:
+            self._last.pop(session_id, None)
 
 
 @dataclass(frozen=True)
@@ -49,6 +83,7 @@ class GmailToolContext:
     service: GmailService
     zone: ZoneInfo
     clock: Any  # Callable[[], datetime]
+    references: GmailReferenceTracker | None = None
 
 
 def _when(context: GmailToolContext, value: datetime | None) -> str:
@@ -91,13 +126,27 @@ class GmailTool(Tool, ABC):
     def resolve(self, args: BaseModel) -> Ready:
         raise NotImplementedError
 
-    def _pick(self, query: str, latest: bool) -> GmailMessage | str:
-        """One message, or the sentence to say instead (nothing found / which one?)."""
-        found = self._ctx.service.find(query)
+    def _pick(self, query: str, latest: bool, same_email: bool = False, origin_session: str | None = None) -> GmailMessage | str:
+        """One message, or the sentence to say instead (nothing found / which one? / no earlier email to refer to).
+        `same_email` (Phase 10 multi-turn) refers back to the last message this session resolved, re-fetched fresh by
+        its id -- never anything cached from before -- rather than searching again by words."""
+        if same_email:
+            message_id = self._ctx.references.recall(origin_session) if self._ctx.references is not None else None
+            if message_id is None:
+                return "I'm not sure which email you mean -- we haven't talked about one recently. Which one do you mean?"
+            try:
+                found = [self._ctx.service.get_message(message_id)]
+            except Exception:  # noqa: BLE001 - the message may have been deleted/moved since; ask again rather than fail oddly
+                return "I couldn't find that email anymore. Which one do you mean?"
+        else:
+            found = self._ctx.service.find(query)
         if not found:
             return "I couldn't find a matching email."
-        if latest or len(found) == 1:
-            return found[0]
+        if same_email or latest or len(found) == 1:
+            chosen = found[0]
+            if self._ctx.references is not None:
+                self._ctx.references.remember(origin_session, chosen.message_id)
+            return chosen
         return _candidates(found)
 
 
@@ -135,13 +184,14 @@ class GmailGetMessageTool(GmailTool):
     input_schema = {
         "query": "string: words identifying the email, e.g. 'from:john internship'",
         "latest": "boolean: true = the newest matching email",
+        "same_email": "boolean: true = the email already discussed earlier in this conversation (a follow-up), not a new search",
     }
 
     def resolve(self, args: GmailGetMessageArgs) -> Ready:
-        return Ready({"query": args.query, "latest": args.latest})
+        return Ready({"query": args.query, "latest": args.latest, "same_email": args.same_email})
 
-    def run(self, *, query: str, latest: bool, origin_session: str | None = None) -> str:
-        message = self._pick(query, latest)
+    def run(self, *, query: str, latest: bool, same_email: bool = False, origin_session: str | None = None) -> str:
+        message = self._pick(query, latest, same_email, origin_session)
         if isinstance(message, str):
             return message
         ctx = self._ctx
@@ -158,10 +208,10 @@ class GmailGetThreadTool(GmailTool):
     input_schema = GmailGetMessageTool.input_schema
 
     def resolve(self, args: GmailGetThreadArgs) -> Ready:
-        return Ready({"query": args.query, "latest": args.latest})
+        return Ready({"query": args.query, "latest": args.latest, "same_email": args.same_email})
 
-    def run(self, *, query: str, latest: bool, origin_session: str | None = None) -> str:
-        message = self._pick(query, latest)
+    def run(self, *, query: str, latest: bool, same_email: bool = False, origin_session: str | None = None) -> str:
+        message = self._pick(query, latest, same_email, origin_session)
         if isinstance(message, str):
             return message
         thread = self._ctx.service.get_thread(message.thread_id)
@@ -186,15 +236,16 @@ class GmailSummarizeTool(GmailTool):
     input_schema = {
         "query": "string: words identifying the email",
         "latest": "boolean: true = the newest matching email",
+        "same_email": "boolean: true = the email already discussed earlier in this conversation (a follow-up), not a new search",
         "thread": "boolean: true = summarize the whole conversation",
         "focus": "summary | action_items | key_points",
     }
 
     def resolve(self, args: GmailSummarizeArgs) -> Ready:
-        return Ready({"query": args.query, "latest": args.latest, "thread": args.thread, "focus": args.focus})
+        return Ready({"query": args.query, "latest": args.latest, "same_email": args.same_email, "thread": args.thread, "focus": args.focus})
 
-    def run(self, *, query: str, latest: bool, thread: bool, focus: str, origin_session: str | None = None) -> str:
-        message = self._pick(query, latest)
+    def run(self, *, query: str, latest: bool, thread: bool, focus: str, same_email: bool = False, origin_session: str | None = None) -> str:
+        message = self._pick(query, latest, same_email, origin_session)
         if isinstance(message, str):
             return message
         service, chosen = self._ctx.service, SummaryFocus(focus)
@@ -212,10 +263,10 @@ class GmailClassifyTool(GmailTool):
     input_schema = GmailGetMessageTool.input_schema
 
     def resolve(self, args: GmailClassifyArgs) -> Ready:
-        return Ready({"query": args.query, "latest": args.latest})
+        return Ready({"query": args.query, "latest": args.latest, "same_email": args.same_email})
 
-    def run(self, *, query: str, latest: bool, origin_session: str | None = None) -> str:
-        message = self._pick(query, latest)
+    def run(self, *, query: str, latest: bool, same_email: bool = False, origin_session: str | None = None) -> str:
+        message = self._pick(query, latest, same_email, origin_session)
         if isinstance(message, str):
             return message
         result = self._ctx.service.classify(message)

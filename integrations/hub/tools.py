@@ -44,6 +44,12 @@ TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in [
     ToolSpec("integration_status", "hub", None, "Real connection status of one or all integrations", optional=("name",)),
     ToolSpec("search_email", "gmail", Permission.SEARCH_EMAIL, "Search email (live, with a labelled cache fallback)", ("query",), ("limit",)),
     ToolSpec("read_email", "gmail", Permission.READ_EMAIL, "Read one email by id (sanitized, bounded) with its topic, importance and extracted dates", ("message_id",)),
+    ToolSpec("gmail_status", "hub", None, "Real Gmail connection status from a live read-only profile check (account redacted)"),
+    ToolSpec("gmail_unread_count", "gmail", Permission.SEARCH_EMAIL, "Exact unread email counts: total, inbox and important"),
+    ToolSpec("gmail_labels", "gmail", Permission.SEARCH_EMAIL, "Gmail labels with unread counters"),
+    ToolSpec("gmail_list_messages", "gmail", Permission.SEARCH_EMAIL, "One page of messages for a Gmail query (page_token continues)", (), ("query", "limit", "page_token")),
+    ToolSpec("gmail_list_threads", "gmail", Permission.SEARCH_EMAIL, "One page of conversation threads for a Gmail query", (), ("query", "limit", "page_token")),
+    ToolSpec("gmail_get_thread", "gmail", Permission.READ_EMAIL, "The messages of one conversation thread (normalized, untrusted text)", ("thread_id",)),
     ToolSpec("search_calendar", "calendar", Permission.READ_EVENTS, "Events matching a query, or the schedule between two times", optional=("query", "start", "end", "limit")),
     ToolSpec("calendar_issues", "calendar", Permission.READ_EVENTS, "Overlaps and duplicates in a date range", optional=("start", "end")),
     ToolSpec("search_github", "github", Permission.READ_REPOSITORIES, "Repositories matching words, or owner/name (no query lists them)", (), ("query", "limit")),
@@ -60,7 +66,8 @@ class HubTools:
     def __init__(self, registry: IntegrationRegistry, repo: HubRepository, clock: Callable[[], datetime], zone, *, calendar_issues_fn=None):
         self._reg, self._repo, self._clock, self._zone = registry, repo, clock, zone
         self._handlers: dict[str, Callable[..., ToolResult]] = {
-            "integration_status": self._status, "search_email": self._search_email, "read_email": self._read_email, "search_calendar": self._search_calendar,
+            "integration_status": self._status, "gmail_status": self._gmail_status, "gmail_unread_count": self._gmail_unread, "gmail_labels": self._gmail_labels, "gmail_list_messages": self._gmail_messages,
+            "gmail_list_threads": self._gmail_threads, "gmail_get_thread": self._gmail_thread, "search_email": self._search_email, "read_email": self._read_email, "search_calendar": self._search_calendar,
             "calendar_issues": self._calendar_issues, "search_github": self._search_github, "get_repository_activity": self._repo_activity, "read_repository_readme": self._read_readme,
             "search_documents": self._search_documents, "read_document": self._read_document, "search_messages": self._search_messages, "search_all": self._search_all,
         }
@@ -142,6 +149,39 @@ class HubTools:
         body = sanitize_external(message.plain_text_body or message.snippet, 2000)
         return ToolResult.ok("gmail", {"email": items[0].to_dict(), "body_untrusted": body, "extracted": [i.to_dict() for i in items[1:]]},
                              injection_suspected=analysis.flagged, untrusted_fields=["body_untrusted"])
+
+    def _gmail_status(self) -> ToolResult:
+        adapter = self._adapter("gmail")
+        if adapter is None:
+            return ToolResult.fail("gmail", ErrorKind.CONFIGURATION_ERROR, "Gmail isn't set up.")
+        if not self._reg.is_enabled("gmail"):
+            from integrations.gmail.status import GmailConnection, build_status
+
+            return ToolResult.ok("gmail", build_status(GmailConnection.DISCONNECTED, checked_at=self._clock()))
+        allowed, reason = self._reg.allowed("gmail", Permission.READ_EMAIL)
+        if not allowed and "permission" in reason:
+            return ToolResult.fail("gmail", ErrorKind.PERMISSION_ERROR, reason)
+        return ToolResult.ok("gmail", adapter.connection_status())
+
+    def _gmail_unread(self) -> ToolResult:
+        counts = self._adapter("gmail").unread_counts()
+        return ToolResult.ok("gmail", counts.model_dump())
+
+    def _gmail_labels(self) -> ToolResult:
+        labels = self._adapter("gmail").labels()
+        return ToolResult.ok("gmail", [label.model_dump() for label in labels], count=len(labels))
+
+    def _gmail_messages(self, query: str = "in:inbox", limit: int = 10, page_token: str | None = None) -> ToolResult:
+        items, token = self._adapter("gmail").search_page(query, limit, page_token)
+        return ToolResult.ok("gmail", [i.to_dict() for i in items], count=len(items), next_page_token=token, query=query)
+
+    def _gmail_threads(self, query: str = "in:inbox", limit: int = 10, page_token: str | None = None) -> ToolResult:
+        page = self._adapter("gmail").threads(query, limit, page_token)
+        return ToolResult.ok("gmail", [t.model_dump() for t in page.threads], count=page.count, next_page_token=page.next_page_token, query=query, untrusted_fields=["snippet"])
+
+    def _gmail_thread(self, thread_id: str) -> ToolResult:
+        items = self._adapter("gmail").thread_items(thread_id)
+        return ToolResult.ok("gmail", [i.to_dict() for i in items], count=len(items))
 
     # ---- calendar ----------------------------------------------------------------------------------------------------------
     def _range(self, start: str | None, end: str | None) -> tuple[datetime, datetime]:

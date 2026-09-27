@@ -6,6 +6,7 @@ VoiceEngine directly. An action that is not available (its service is not enable
 
 Menu:
     JARVIS / <status> / <microphone state>
+    JARVIS — ON / OFF  (the voice switch: OFF releases the microphone and stops wake word, VAD and speech recognition)
     Talk to JARVIS - Today's Briefing - Tasks - Reminders - Memory - Integrations - Settings
     Stop speaking - Open dashboard - Mute voice - Voice notifications - Do Not Disturb
     Pause listening (Resume listening) - Private mode - Restart JARVIS - Exit
@@ -42,6 +43,7 @@ _STATE_COLORS: dict[RuntimeState | TrayState, str] = {
     TrayState.OFFLINE: "#ef4444",
     TrayState.PAUSED: "#3b82f6",
     TrayState.DEGRADED: "#f97316",
+    TrayState.VOICE_OFF: "#4b5563",
 }
 
 
@@ -74,6 +76,10 @@ class TrayActions:
     open_settings: Callable[[], None] | None = None
     toggle_private: Callable[[], None] | None = None
     talk: Callable[[], bool] | None = None
+    # The JARVIS voice ON/OFF switch (voice.switch.VoiceSwitch): `toggle_voice_power` flips it, `voice_power_on` reads the real state.
+    toggle_voice_power: Callable[[], object] | None = None
+    voice_power_on: Callable[[], bool] | None = None
+    open_voice_settings: Callable[[], None] | None = None
     # Phase 19 voice controls. Each toggle has a matching state reader so the menu shows what is really on.
     stop_speaking: Callable[[], bool] | None = None
     toggle_mute: Callable[[], None] | None = None
@@ -146,7 +152,11 @@ class TrayController:
 
     def view(self) -> TrayView:
         status: RuntimeStatus = self._manager.status()
-        return compute_tray_view(status, self._overall(), self._privacy_mode())
+        return compute_tray_view(status, self._overall(), self._privacy_mode(), self._voice_on())
+
+    def _voice_on(self) -> bool:
+        reader = self._actions.voice_power_on
+        return True if reader is None else bool(reader())
 
     def refresh(self) -> None:
         """Re-read the real state and update the icon, tooltip and menu. Called on runtime and health changes."""
@@ -180,9 +190,11 @@ class TrayController:
             pystray.MenuItem("JARVIS", None, enabled=False),
             pystray.MenuItem(lambda item: self.view().label, None, enabled=False),
             pystray.MenuItem(lambda item: self.view().voice_label, None, enabled=False),
+            pystray.MenuItem(lambda item: "JARVIS — ON  (click to turn OFF)" if self._voice_on() else "JARVIS — OFF  (click to turn ON)", self._toggle_voice_power,
+                             checked=lambda item: self._voice_on(), enabled=lambda item: a.toggle_voice_power is not None),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Talk to JARVIS", self._talk,
-                             enabled=lambda item: a.talk is not None and state() is RuntimeState.RUNNING),
+                             enabled=lambda item: a.talk is not None and state() is RuntimeState.RUNNING and self._voice_on()),
             pystray.MenuItem("Stop speaking", self._stop_speaking, enabled=lambda item: a.stop_speaking is not None and state() is RuntimeState.RUNNING),
             pystray.MenuItem("Today's Briefing", self._shower(a.show_briefing, "Today's briefing"), enabled=lambda item: a.show_briefing is not None),
             pystray.MenuItem("Tasks", self._shower(a.show_tasks, "Tasks"), enabled=lambda item: a.show_tasks is not None),
@@ -197,6 +209,7 @@ class TrayController:
             pystray.MenuItem("Open browser", self._toggle(a.open_browser), enabled=lambda item: a.open_browser is not None),
             pystray.MenuItem("Close browser", self._toggle(a.close_browser), enabled=lambda item: a.close_browser is not None and bool(a.browser_open and a.browser_open())),
             pystray.MenuItem("Stop browser action", self._toggle(a.stop_browser_action), enabled=lambda item: a.stop_browser_action is not None and bool(a.browser_open and a.browser_open())),
+            pystray.MenuItem("Voice Settings", self._toggle(a.open_voice_settings), enabled=lambda item: a.open_voice_settings is not None),
             pystray.MenuItem("Settings", self._settings, enabled=lambda item: a.open_settings is not None),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Mute voice", self._toggle(a.toggle_mute), checked=lambda item: bool(a.is_muted and a.is_muted()), enabled=lambda item: a.toggle_mute is not None),
@@ -207,7 +220,7 @@ class TrayController:
             pystray.MenuItem(
                 lambda item: "Resume listening" if state() in (RuntimeState.PAUSED, RuntimeState.STOPPED, RuntimeState.ERROR) else "Pause listening",
                 self._pause_or_resume,
-                enabled=lambda item: state() in (RuntimeState.RUNNING, RuntimeState.PAUSED, RuntimeState.STOPPED, RuntimeState.ERROR),
+                enabled=lambda item: self._voice_on() and state() in (RuntimeState.RUNNING, RuntimeState.PAUSED, RuntimeState.STOPPED, RuntimeState.ERROR),
             ),
             pystray.MenuItem(
                 "Private mode (microphone off)", self._toggle_private,
@@ -237,6 +250,15 @@ class TrayController:
                 logger.warning("Tray notification failed: %s", exc)
 
         return show
+
+    def _toggle_voice_power(self, icon=None, item=None) -> None:
+        """Runs the same VoiceSwitch the dashboard uses; the menu then re-reads the real state (never a local flag)."""
+        if self._actions.toggle_voice_power is not None:
+            try:
+                self._actions.toggle_voice_power()
+            except Exception as exc:  # noqa: BLE001 - a menu click must never crash the tray
+                logger.warning("Tray voice ON/OFF failed (%s)", type(exc).__name__)
+        self.refresh()
 
     def _talk(self, icon=None, item=None) -> None:
         if self._actions.talk is not None:

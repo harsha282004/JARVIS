@@ -7,6 +7,7 @@ Without a running launcher there is no context, and the routes answer 503 rather
 """
 
 import hmac
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -16,7 +17,7 @@ from pydantic import BaseModel
 from backend.core.context import AppContext, get_context
 from backend.core.metrics import metrics
 from backend.core.privacy import INDICATOR_TEXT, PrivacyMode, voice_indicator
-from backend.core.sysmetrics import working_set_mb
+from backend.core.sysmetrics import cpu_percent, disk_usage_percent, working_set_mb
 
 router = APIRouter()
 _DASHBOARD = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -69,6 +70,7 @@ def status(ctx: AppContext = Depends(authorized)) -> dict:
         "privacy_mode": mode.value,
         "overall": ctx.health.overall().value if ctx.health is not None else None,
         "offline_mode": ctx.settings.JARVIS_OFFLINE_MODE,
+        "process": {"pid": os.getpid(), "parent_pid": os.getppid(), "startup_source": ctx.startup_source, "tray": ctx.app.tray_status if ctx.app is not None else None},
     }
 
 
@@ -138,6 +140,8 @@ def audit(limit: int = 50, ctx: AppContext = Depends(authorized)) -> dict:
 def get_metrics(ctx: AppContext = Depends(authorized)) -> dict:
     data = metrics.snapshot()
     data["memory_mb"] = working_set_mb()
+    data["cpu_percent"] = cpu_percent()  # this process only, over the interval since the previous call -- never fabricated
+    data["disk"] = disk_usage_percent()
     return data
 
 
@@ -170,6 +174,69 @@ class PermissionRequest(BaseModel):
 def integrations(ctx: AppContext = Depends(authorized)) -> dict:
     """The real state of every integration: status, enabled, last sync, granted permissions, last error. Never a token or credential."""
     return {"integrations": [i.to_dict() for i in _hub(ctx).registry.all_info()]}
+
+
+# ---- Gmail (read-only) ---------------------------------------------------------------------------------------------------------
+# Everything goes through the hub's gated tools (enabled + connected + permission), so the API can never do more than the assistant can. Responses carry
+# normalized data and a redacted account: never a token, a client secret or a raw Google response. Message text is untrusted data.
+
+_GMAIL_STATUS = {"NOT_FOUND": 404, "INVALID_REQUEST": 422, "PERMISSION_ERROR": 403, "CONFIGURATION_ERROR": 409, "AUTH_ERROR": 401, "RATE_LIMIT": 429}
+
+
+def _gmail_call(ctx: AppContext, tool: str, args: dict | None = None) -> dict:
+    result = _hub(ctx).tools.call(tool, args or {})
+    if not result.success:
+        error = result.error or {}
+        raise HTTPException(status_code=_GMAIL_STATUS.get(error.get("type", ""), 502), detail=error.get("message", "Gmail request failed"))
+    return {"data": result.data, **result.metadata}
+
+
+@router.get("/integrations/gmail/status", dependencies=[Depends(check_host)])
+def gmail_status(ctx: AppContext = Depends(authorized)) -> dict:
+    """Live check (one read-only profile call): CONNECTED / NOT_CONFIGURED / AUTH_REQUIRED / TOKEN_EXPIRED / PERMISSION_DENIED / RATE_LIMITED / NETWORK_ERROR / API_ERROR / DISCONNECTED."""
+    return _gmail_call(ctx, "gmail_status")["data"]
+
+
+@router.post("/integrations/gmail/test", dependencies=[Depends(check_host)])
+def gmail_test(ctx: AppContext = Depends(authorized)) -> dict:
+    return gmail_status(ctx)
+
+
+@router.get("/integrations/gmail/unread/count", dependencies=[Depends(check_host)])
+def gmail_unread(ctx: AppContext = Depends(authorized)) -> dict:
+    return _gmail_call(ctx, "gmail_unread_count")["data"]
+
+
+@router.get("/integrations/gmail/labels", dependencies=[Depends(check_host)])
+def gmail_labels(ctx: AppContext = Depends(authorized)) -> dict:
+    return _gmail_call(ctx, "gmail_labels")
+
+
+@router.get("/integrations/gmail/messages", dependencies=[Depends(check_host)])
+def gmail_messages(query: str = "in:inbox", limit: int = 10, page_token: str | None = None, ctx: AppContext = Depends(authorized)) -> dict:
+    args = {"query": query, "limit": limit, **({"page_token": page_token} if page_token else {})}
+    return _gmail_call(ctx, "gmail_list_messages", args)
+
+
+@router.get("/integrations/gmail/search", dependencies=[Depends(check_host)])
+def gmail_search(q: str, limit: int = 10, ctx: AppContext = Depends(authorized)) -> dict:
+    return _gmail_call(ctx, "search_email", {"query": q, "limit": limit})
+
+
+@router.get("/integrations/gmail/messages/{message_id}", dependencies=[Depends(check_host)])
+def gmail_message(message_id: str, ctx: AppContext = Depends(authorized)) -> dict:
+    return _gmail_call(ctx, "read_email", {"message_id": message_id})
+
+
+@router.get("/integrations/gmail/threads", dependencies=[Depends(check_host)])
+def gmail_threads(query: str = "in:inbox", limit: int = 10, page_token: str | None = None, ctx: AppContext = Depends(authorized)) -> dict:
+    args = {"query": query, "limit": limit, **({"page_token": page_token} if page_token else {})}
+    return _gmail_call(ctx, "gmail_list_threads", args)
+
+
+@router.get("/integrations/gmail/threads/{thread_id}", dependencies=[Depends(check_host)])
+def gmail_thread(thread_id: str, ctx: AppContext = Depends(authorized)) -> dict:
+    return _gmail_call(ctx, "gmail_get_thread", {"thread_id": thread_id})
 
 
 @router.post("/integrations/{name}/enable", dependencies=[Depends(check_host)])
@@ -244,6 +311,27 @@ def voice_status(ctx: AppContext = Depends(authorized)) -> dict:
     return snap
 
 
+def _switch(ctx: AppContext):
+    switch = getattr(_voice(ctx), "switch", None)
+    if switch is None:
+        raise HTTPException(status_code=503, detail="the voice switch is not available")
+    return switch
+
+
+@router.post("/voice/enable", dependencies=[Depends(check_host)])
+def voice_enable(ctx: AppContext = Depends(authorized)) -> dict:
+    """JARVIS ON: the same VoiceSwitch the tray uses. Opens the microphone and starts wake-word listening (idempotent)."""
+    _switch(ctx).enable()
+    return voice_status(ctx)
+
+
+@router.post("/voice/disable", dependencies=[Depends(check_host)])
+def voice_disable(ctx: AppContext = Depends(authorized)) -> dict:
+    """JARVIS OFF: releases the microphone and stops wake word, VAD and speech recognition (idempotent). The application keeps running."""
+    _switch(ctx).disable()
+    return voice_status(ctx)
+
+
 @router.post("/voice/settings", dependencies=[Depends(check_host)])
 def voice_settings(changes: dict, ctx: AppContext = Depends(authorized)) -> dict:
     """Change persisted voice settings (wake sensitivity, TTS speed/volume, DND, ...). Invalid values change nothing (400)."""
@@ -269,6 +357,40 @@ def voice_activate(ctx: AppContext = Depends(authorized)) -> dict:
 @router.get("/voice/log", dependencies=[Depends(check_host)])
 def voice_log(limit: int = 50, ctx: AppContext = Depends(authorized)) -> dict:
     return {"events": _voice(ctx).log.recent(max(1, min(limit, 200)))}
+
+
+# ---- dashboard chat -------------------------------------------------------------------------------------------------------------
+# The dashboard's command bar. Goes through the exact same ConversationEngine/AgentBrain/Tool Router/PermissionManager stack as
+# voice (backend/core/dashboard_chat.py, voice.bootstrap.build_conversation_engine) -- a separate conversation session, never a
+# second, simplified chatbot. A Gmail/Calendar/tool reply is exactly as real as it is from voice; an LLM failure is reported with
+# the same honest, per-kind text voice uses, never fabricated and never conflated with a tool failure.
+
+
+class ChatMessage(BaseModel):
+    text: str
+
+
+def _chat(ctx: AppContext):
+    chat = getattr(ctx, "chat", None)
+    if chat is None:
+        raise HTTPException(status_code=503, detail="the dashboard chat is not running")
+    return chat
+
+
+@router.post("/chat", dependencies=[Depends(check_host)])
+def chat_ask(message: ChatMessage, ctx: AppContext = Depends(authorized)) -> dict:
+    return _chat(ctx).ask(message.text)
+
+
+@router.get("/chat/history", dependencies=[Depends(check_host)])
+def chat_history(ctx: AppContext = Depends(authorized)) -> dict:
+    return {"messages": _chat(ctx).history()}
+
+
+@router.post("/chat/reset", dependencies=[Depends(check_host)])
+def chat_reset(ctx: AppContext = Depends(authorized)) -> dict:
+    _chat(ctx).reset()
+    return {"reset": True}
 
 
 # ---- browser (Phase 20) ---------------------------------------------------------------------------------------------------------

@@ -20,6 +20,28 @@ class LLMProviderError(Exception):
         self.kind = kind
 
 
+# Distinct, honest text per `LLMProviderError.kind`, shared by every caller that speaks or displays an LLM failure
+# (the voice engine and the dashboard chat endpoint) so a transient rate limit, a slow response and a real outage are
+# never all reported as the same flat "unavailable" -- and so a Gmail/tool failure (which never raises this) can never
+# be mistaken for one either. See docs/GROQ_RATE_LIMITS.md for what was measured.
+GENERIC_LLM_ERROR = "I can't reach the language model right now. I can still help with reminders, your calendar and your email."
+LLM_ERROR_MESSAGES: dict[str, str] = {
+    "rate_limit": "I'm being rate-limited by my language model right now. Give me a moment and ask again.",
+    "timeout": "That took too long for my language model to answer. Please try asking again.",
+    "auth": "There's a problem with my language model's setup (an authentication error). This needs the API key checked.",
+    "config": "My language model isn't configured correctly. This needs a look at my settings.",
+    "model": "The language model I'm set up to use isn't available right now.",
+    "server": "My language model's service is having trouble right now. Please try again shortly.",
+    "network": "I can't reach my language model right now -- there may be a network problem.",
+    "bad_response": "My language model gave me a response I couldn't use. Please try asking again.",
+}
+
+
+def describe_llm_error(exc: LLMProviderError) -> str:
+    """The honest, user-facing text for `exc`, by its classified `kind` (falls back to the generic message)."""
+    return LLM_ERROR_MESSAGES.get(getattr(exc, "kind", ""), GENERIC_LLM_ERROR)
+
+
 class LLMProvider(ABC):
     """Base interface for a chat-completion capable LLM backend."""
 

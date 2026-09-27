@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 
 from integrations.base import Integration
-from integrations.gmail.models import GmailMessage, GmailSearchResult, GmailThread
+from integrations.gmail.models import GmailLabel, GmailMessage, GmailProfile, GmailSearchResult, GmailThread, GmailThreadList
 
 
 class GmailClient(ABC):
@@ -23,6 +23,20 @@ class GmailClient(ABC):
         """Every message of the thread in chronological order (bounded)."""
         raise NotImplementedError
 
+
+    def profile(self) -> GmailProfile:
+        """The connected account (also the cheapest real proof that the credential works). Optional: clients that cannot raise NotImplementedError."""
+        raise NotImplementedError
+
+    def list_labels(self) -> list[GmailLabel]:
+        raise NotImplementedError
+
+    def get_label(self, label_id: str) -> GmailLabel:
+        """One label with its exact message/thread counters."""
+        raise NotImplementedError
+
+    def list_threads(self, query: str, max_results: int, page_token: str | None = None) -> GmailThreadList:
+        raise NotImplementedError
 
     def get_attachment(self, message_id: str, attachment_id: str, max_bytes: int) -> bytes:
         """The decoded bytes of one attachment, refusing anything larger than `max_bytes`. Optional: clients that cannot raise NotImplementedError."""

@@ -4,6 +4,7 @@
 api_token*
 # Gmail OAuth client file and token (never commit)
 /.jarvis/
+/secrets/
 client_secret*.json
 credentials.json
 token.json

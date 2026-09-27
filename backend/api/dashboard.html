@@ -3,113 +3,572 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JARVIS Dashboard</title>
+<title>JARVIS — Command Center</title>
 <style>
+  /* ============================== DESIGN TOKENS ============================== */
   :root {
-    --bg: #f5f6f8; --panel: #ffffff; --text: #1b1f27; --muted: #5d6675; --line: #e2e5ea;
-    --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --info: #1d4ed8; --off: #6b7280;
-    --chip: #eef1f5;
+    --jarvis-bg: #05070d;
+    --jarvis-bg-2: #080c14;
+    --jarvis-panel: rgba(18, 26, 42, 0.55);
+    --jarvis-panel-hover: rgba(24, 34, 54, 0.7);
+    --jarvis-border: rgba(120, 180, 255, 0.14);
+    --jarvis-border-strong: rgba(120, 190, 255, 0.32);
+    --jarvis-cyan: #22d3ee;
+    --jarvis-blue: #3b82f6;
+    --jarvis-text: #e7eefc;
+    --jarvis-muted: #8593ad;
+    --jarvis-dim: #56617a;
+    --jarvis-success: #34e0b8;
+    --jarvis-warning: #fbbf24;
+    --jarvis-error: #f87171;
+    --jarvis-off: #4b5567;
+    --jarvis-glow: 0 0 28px rgba(34, 211, 238, 0.25);
+    --radius: 16px;
+    --radius-sm: 10px;
+    --sidebar-w: 232px;
+    --sidebar-w-collapsed: 76px;
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #0f1218; --panel: #171b23; --text: #e6e9ef; --muted: #98a2b3; --line: #262c37;
-            --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --info: #7aa2ff; --off: #8b93a1; --chip: #202632; }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; }
-  h1 { font-size: 18px; margin: 0; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
-  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
-  section.wide { grid-column: 1 / -1; }
-  .status { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--chip); font-weight: 600; }
-  .pill.online, .pill.healthy { color: var(--ok); } .pill.degraded, .pill.starting { color: var(--warn); }
-  .pill.offline, .pill.failed, .pill.disconnected { color: var(--bad); } .pill.disabled, .pill.paused { color: var(--off); }
+  html, body { height: 100%; }
+  body {
+    margin: 0; color: var(--jarvis-text); background: var(--jarvis-bg);
+    font: 14px/1.5 -apple-system, "Segoe UI", ui-sans-serif, system-ui, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* ambient background: gradient + faint grid + soft glows, no images, cheap to render */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+    background:
+      radial-gradient(900px 500px at 14% -10%, rgba(34, 211, 238, 0.10), transparent 60%),
+      radial-gradient(700px 500px at 100% 10%, rgba(59, 130, 246, 0.08), transparent 55%),
+      linear-gradient(180deg, var(--jarvis-bg-2), var(--jarvis-bg) 40%);
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.35;
+    background-image:
+      linear-gradient(rgba(120, 180, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120, 180, 255, 0.05) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: radial-gradient(1200px 700px at 50% 0%, black, transparent 75%);
+  }
+  a { color: inherit; }
+  h1, h2, h3, h4 { margin: 0; font-weight: 650; letter-spacing: 0.01em; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  ::selection { background: rgba(34, 211, 238, 0.25); }
+  :focus-visible { outline: 2px solid var(--jarvis-cyan); outline-offset: 2px; border-radius: 4px; }
+
+  /* ============================== GLASS PANEL ============================== */
+  .glass {
+    background: var(--jarvis-panel); border: 1px solid var(--jarvis-border); border-radius: var(--radius);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 12px 30px -18px rgba(0,0,0,0.6);
+    transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+  }
+  .glass:hover { border-color: var(--jarvis-border-strong); }
+  .glow { box-shadow: var(--jarvis-glow); }
+
+  /* ============================== SHELL LAYOUT ============================== */
+  .app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
+  .app.collapsed { grid-template-columns: var(--sidebar-w-collapsed) 1fr; }
+
+  /* ---- sidebar ---- */
+  .sidebar {
+    position: sticky; top: 0; height: 100vh; padding: 18px 12px; display: flex; flex-direction: column; gap: 18px;
+    border-right: 1px solid var(--jarvis-border); background: rgba(6, 9, 16, 0.6); backdrop-filter: blur(10px);
+    overflow-y: auto; z-index: 20;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; }
+  .brand .mark {
+    width: 34px; height: 34px; flex: none; border-radius: 10px; display: grid; place-items: center; font-weight: 800;
+    background: radial-gradient(circle at 30% 30%, rgba(34,211,238,.35), rgba(59,130,246,.15));
+    border: 1px solid var(--jarvis-border-strong); color: var(--jarvis-cyan); box-shadow: var(--jarvis-glow);
+  }
+  .brand .txt { min-width: 0; }
+  .brand .txt b { display: block; font-size: 15px; letter-spacing: .04em; }
+  .brand .txt span { display: block; font-size: 11px; color: var(--jarvis-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .app.collapsed .brand .txt { display: none; }
+
+  nav.navlist { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  nav.navlist button {
+    display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid transparent;
+    background: transparent; color: var(--jarvis-muted); text-align: left; font-size: 13px; font-weight: 600; letter-spacing: .02em;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  nav.navlist button svg { flex: none; width: 18px; height: 18px; opacity: .85; }
+  nav.navlist button:hover { background: rgba(255,255,255,0.03); color: var(--jarvis-text); }
+  nav.navlist button.active { color: var(--jarvis-cyan); background: rgba(34,211,238,0.08); border-color: rgba(34,211,238,0.25); box-shadow: inset 0 0 0 1px rgba(34,211,238,.05); }
+  .app.collapsed nav.navlist button span.label { display: none; }
+  .app.collapsed nav.navlist button { justify-content: center; }
+
+  .sidebar-foot { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--jarvis-dim); padding: 8px; border-top: 1px solid var(--jarvis-border); }
+  .app.collapsed .sidebar-foot { display: none; }
+  #sidebar-toggle { align-self: flex-start; margin-left: 4px; border: 1px solid var(--jarvis-border); border-radius: 8px; padding: 6px 8px; background: rgba(255,255,255,0.02); color: var(--jarvis-muted); }
+
+  /* ---- topbar ---- */
+  .main { min-width: 0; padding: 18px 24px 60px; max-width: 1440px; margin: 0 auto; width: 100%; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .topbar .greet h1 { font-size: 22px; }
+  .topbar .greet p { margin: 2px 0 0; color: var(--jarvis-muted); font-size: 13px; }
+  .topbar .right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .clock { text-align: right; line-height: 1.25; }
+  .clock .time { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .clock .date { font-size: 11px; color: var(--jarvis-muted); }
+  #menu-toggle { display: none; }
+
+  /* ============================== PILLS / STATUS ============================== */
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-weight: 650; font-size: 11.5px; background: rgba(255,255,255,0.04); border: 1px solid var(--jarvis-border); }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+  .pill.ok, .pill.online, .pill.healthy, .pill.connected, .pill.ready, .pill.active, .pill.running, .pill.completed { color: var(--jarvis-success); }
+  .pill.warn, .pill.degraded, .pill.starting, .pill.syncing, .pill.authenticating, .pill.waiting_for_user, .pill.waiting_for_confirmation, .pill.waiting_for_data, .pill.paused { color: var(--jarvis-warning); }
+  .pill.bad, .pill.offline, .pill.failed, .pill.disconnected, .pill.error, .pill.token_expired, .pill.permission_denied { color: var(--jarvis-error); }
+  .pill.off, .pill.disabled, .pill.not_configured, .pill.closed, .pill.unknown, .pill.cancelled { color: var(--jarvis-off); }
+
+  /* ============================== HERO / AI CORE ============================== */
+  .hero { display: grid; grid-template-columns: 260px 1fr; gap: 22px; padding: 22px; margin-bottom: 20px; }
+  .core-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .core { position: relative; width: 176px; height: 176px; display: grid; place-items: center; }
+  .core .ring { position: absolute; inset: 0; border-radius: 50%; border: 1px solid rgba(34,211,238,0.18); }
+  .core .ring.r2 { inset: 16px; border-color: rgba(34,211,238,0.28); animation: spin 18s linear infinite; border-top-color: rgba(34,211,238,0.7); }
+  .core .ring.r3 { inset: 32px; border-color: rgba(59,130,246,0.25); animation: spin 26s linear infinite reverse; border-bottom-color: rgba(59,130,246,0.6); }
+  .core .glow-orb {
+    position: absolute; inset: 44px; border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, rgba(34,211,238,.55), rgba(59,130,246,.15) 60%, transparent 75%);
+    filter: blur(2px); animation: pulse 3.2s ease-in-out infinite;
+  }
+  .core .mark { position: relative; z-index: 2; font-size: 13px; font-weight: 800; letter-spacing: .12em; color: var(--jarvis-text); text-shadow: 0 0 18px rgba(34,211,238,.6); }
+  .core[data-state="off"] .ring, .core[data-state="off"] .glow-orb { opacity: .18; animation: none; }
+  .core[data-state="sleeping"] .glow-orb { animation-duration: 5s; opacity: .55; }
+  .core[data-state="listening"] .glow-orb { animation-duration: 1.1s; }
+  .core[data-state="listening"] .ring.r2 { animation-duration: 5s; }
+  .core[data-state="processing"] .ring.r2 { animation-duration: 2.4s; }
+  .core[data-state="processing"] .ring.r3 { animation-duration: 3.6s; }
+  .core[data-state="speaking"] .glow-orb { animation-duration: .55s; }
+  .core[data-state="error"] .glow-orb { background: radial-gradient(circle at 40% 35%, rgba(248,113,113,.6), rgba(248,113,113,.1) 60%, transparent 75%); }
+  .core[data-state="error"] .mark { text-shadow: 0 0 18px rgba(248,113,113,.7); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%, 100% { transform: scale(0.94); opacity: .75; } 50% { transform: scale(1.05); opacity: 1; } }
+  .core-caption { text-align: center; }
+  .core-caption .state { font-size: 13px; font-weight: 700; color: var(--jarvis-cyan); letter-spacing: .04em; }
+  .core-caption .hint { font-size: 11.5px; color: var(--jarvis-muted); margin-top: 2px; }
+
+  .hero-right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { padding: 10px 12px; border-radius: var(--radius-sm); background: rgba(255,255,255,0.02); border: 1px solid var(--jarvis-border); }
+  .stat .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--jarvis-muted); }
+  .stat .v { margin-top: 3px; font-size: 13.5px; font-weight: 650; }
+
+  /* ---- command bar ---- */
+  .command { display: flex; gap: 10px; align-items: center; }
+  .command input {
+    flex: 1; min-width: 0; background: rgba(255,255,255,0.03); border: 1px solid var(--jarvis-border); color: var(--jarvis-text);
+    padding: 12px 14px; border-radius: 12px; font-size: 14px; transition: border-color .15s, box-shadow .15s;
+  }
+  .command input:focus { border-color: var(--jarvis-cyan); box-shadow: 0 0 0 3px rgba(34,211,238,.12); outline: none; }
+  .command button.send {
+    background: linear-gradient(135deg, rgba(34,211,238,.9), rgba(59,130,246,.9)); border: none; color: #04121a; font-weight: 750;
+    padding: 12px 18px; border-radius: 12px; transition: transform .1s, filter .15s;
+  }
+  .command button.send:hover { filter: brightness(1.08); }
+  .command button.send:active { transform: scale(.97); }
+  .command button.send:disabled { opacity: .5; cursor: default; }
+  .chatlog { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+  .bubble { padding: 9px 12px; border-radius: 12px; font-size: 13px; max-width: 92%; }
+  .bubble.user { align-self: flex-end; background: rgba(59,130,246,.16); border: 1px solid rgba(59,130,246,.28); }
+  .bubble.assistant { align-self: flex-start; background: rgba(34,211,238,.08); border: 1px solid var(--jarvis-border); }
+  .bubble.assistant.error { background: rgba(248,113,113,.08); border-color: rgba(248,113,113,.3); color: #ffd7d7; }
+
+  .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .qa-btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 8px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--jarvis-border); color: var(--jarvis-text);
+    transition: border-color .15s, background .15s, transform .1s;
+  }
+  .qa-btn:hover { border-color: var(--jarvis-border-strong); background: rgba(34,211,238,0.06); }
+  .qa-btn:active { transform: scale(.96); }
+  .qa-btn svg { width: 14px; height: 14px; opacity: .85; }
+
+  /* ============================== SECTIONS / GRID ============================== */
+  .section { margin-bottom: 26px; scroll-margin-top: 18px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+  .section-head h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .09em; color: var(--jarvis-muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .grid.wide-2 { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+  .panel { padding: 16px 18px; min-width: 0; }
+  .panel.span-2 { grid-column: span 2; }
+  @media (max-width: 900px) { .panel.span-2 { grid-column: span 1; } }
+  .panel h3 { font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  .panel h3 .t { display: flex; align-items: center; gap: 8px; }
+  .muted { color: var(--jarvis-muted); } .small { font-size: 12px; } .err { color: var(--jarvis-error); }
   table { width: 100%; border-collapse: collapse; }
-  td, th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li { padding: 6px 0; border-bottom: 1px solid var(--line); }
-  li:last-child, tr:last-child td { border-bottom: 0; }
-  .muted { color: var(--muted); } .small { font-size: 12px; }
-  button { font: inherit; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--chip); color: var(--text); cursor: pointer; }
-  button:hover { border-color: var(--info); } button.active { border-color: var(--info); color: var(--info); font-weight: 600; }
+  td, th { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--jarvis-border); vertical-align: top; font-size: 12.5px; }
+  th { color: var(--jarvis-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: 0; }
+  ul.list { list-style: none; margin: 0; padding: 0; }
+  ul.list li { padding: 7px 0; border-bottom: 1px solid var(--jarvis-border); font-size: 12.5px; }
+  ul.list li:last-child { border-bottom: 0; }
+  .btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--jarvis-border); background: rgba(255,255,255,0.03); color: var(--jarvis-text); font-size: 12px; font-weight: 600; }
+  .btn:hover { border-color: var(--jarvis-cyan); color: var(--jarvis-cyan); }
+  .btn.active { border-color: var(--jarvis-cyan); color: var(--jarvis-cyan); background: rgba(34,211,238,.08); }
+  .btn.on { border-color: var(--jarvis-success); color: var(--jarvis-success); }
+  .row { margin: 8px 0; }
+  input[type="number"] { background: rgba(255,255,255,0.03); border: 1px solid var(--jarvis-border); color: var(--jarvis-text); border-radius: 6px; padding: 3px 6px; }
+  details summary { cursor: pointer; color: var(--jarvis-cyan); font-size: 12px; }
+  .progress { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.06); overflow: hidden; margin-top: 6px; }
+  .progress > span { display: block; height: 100%; background: linear-gradient(90deg, var(--jarvis-cyan), var(--jarvis-blue)); transition: width .4s ease; }
+  .empty-state { text-align: center; padding: 22px 10px; color: var(--jarvis-muted); }
+  .empty-state a.btn { display: inline-block; margin-top: 8px; }
+  .skeleton { height: 14px; border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,.03), rgba(255,255,255,.08), rgba(255,255,255,.03)); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; margin: 6px 0; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  .integ-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .integ-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 11px; border-radius: var(--radius-sm); background: rgba(255,255,255,0.02); border: 1px solid var(--jarvis-border); font-size: 12.5px; font-weight: 600; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); }
-  .card h3 { margin: 0 0 6px; font-size: 15px; } .card .row { margin: 6px 0; } .card button { margin: 2px 4px 2px 0; padding: 3px 9px; font-size: 12px; }
-  .pill.connected, .pill.syncing { color: var(--ok); } .pill.authenticating { color: var(--warn); } .pill.error { color: var(--bad); }
-  details summary { cursor: pointer; color: var(--info); }
-  .err { color: var(--bad); }
-  @media (max-width: 600px) { main { padding: 12px; } header { padding: 12px; } }
+  .card { border: 1px solid var(--jarvis-border); border-radius: var(--radius-sm); padding: 12px; background: rgba(255,255,255,0.02); }
+  .card h4 { margin: 0 0 6px; font-size: 13.5px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+
+  /* ============================== RESPONSIVE ============================== */
+  @media (max-width: 980px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { position: fixed; left: 0; top: 0; width: 240px; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 20px 0 40px rgba(0,0,0,.4); }
+    .sidebar.open { transform: translateX(0); }
+    #menu-toggle { display: inline-flex; }
+    #sidebar-toggle { display: none; }
+    .hero { grid-template-columns: 1fr; }
+    .core-wrap { flex-direction: row; justify-content: flex-start; }
+  }
+  @media (max-width: 560px) {
+    .main { padding: 14px 12px 50px; }
+    .topbar .right { width: 100%; justify-content: space-between; }
+    .core-wrap { flex-direction: column; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>JARVIS</h1>
-  <div class="status" id="headline" aria-live="polite">Loading…</div>
-</header>
-<main>
-  <section class="wide"><h2>Integrations</h2><div id="integrations" class="cards">Loading…</div>
-    <p class="small muted">Status comes from the integration hub's recorded facts (last sync, last error). Write permissions are off until you turn them on, and every use still asks you first.</p></section>
-  <section class="wide"><h2>Voice</h2><div id="voice">Loading…</div>
-    <p class="small muted">Only state, short text and timings are shown. Audio is never recorded, stored or displayed.</p></section>
-  <section class="wide"><h2>Personal Operator</h2><div id="operator-panel">Loading…</div>
-    <p class="small muted">Workflow summaries only: goal, status, progress, sources, the current step and its risk. No email, page or document text, no hidden reasoning. Anything that sends, submits, uploads, deletes or publishes waits for your confirmation.</p></section>
-  <section class="wide"><h2>Autonomous task</h2><div id="tasks-panel">Loading…</div>
-    <p class="small muted">Concise action descriptions only: no hidden reasoning, page text or credentials. Higher-risk steps wait for your confirmation.</p></section>
-  <section class="wide"><h2>Browser</h2><div id="browser">Loading…</div>
-    <p class="small muted">Only the state is shown: the page address without its query string, the title, and whether the last action was verified. Cookies, credentials and page content are never displayed.</p></section>
-  <section><h2>System</h2><div id="system">Loading…</div></section>
-  <section><h2>Privacy</h2><div id="privacy">Loading…</div></section>
-  <section class="wide"><h2>Services</h2><div id="services">Loading…</div></section>
-  <section><h2>Deadlines</h2><ul id="deadlines"></ul></section>
-  <section><h2>Events</h2><ul id="events"></ul></section>
-  <section><h2>Pending tasks</h2><ul id="tasks"></ul></section>
-  <section><h2>Conflicts</h2><ul id="conflicts"></ul></section>
-  <section class="wide"><h2>Recommendations</h2><ul id="recs"></ul>
-    <p class="small muted">Each recommendation shows the evidence it is based on. Nothing here is acted on without your confirmation.</p></section>
-  <section><h2>Active context &amp; sources</h2><div id="context"></div></section>
-  <section><h2>Notifications</h2><ul id="notes"></ul></section>
-  <section><h2>Performance (measured)</h2><div id="perf"></div></section>
-  <section><h2>Recent activity log</h2><ul id="audit"></ul></section>
-</main>
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <div class="brand"><div class="mark">J</div><div class="txt"><b>JARVIS</b><span>Personal AI Assistant</span></div></div>
+      <button id="sidebar-toggle" aria-label="Collapse sidebar" title="Collapse sidebar">«</button>
+    </div>
+    <nav class="navlist" id="navlist" aria-label="Sections">
+      <!-- populated by JS: icon + label + data-target -->
+    </nav>
+    <div class="sidebar-foot" id="sidebar-foot">Loading…</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <button id="menu-toggle" class="btn" aria-label="Open menu">☰</button>
+        <div class="greet">
+          <h1 id="greeting">Good day.</h1>
+          <p id="greeting-sub">JARVIS is starting…</p>
+        </div>
+      </div>
+      <div class="right">
+        <span class="pill" id="headline-pill">Loading…</span>
+        <div class="clock"><div class="time" id="clock-time">--:--</div><div class="date" id="clock-date">—</div></div>
+      </div>
+    </div>
+
+    <!-- ================= HERO: AI CORE + STATUS + COMMAND ================= -->
+    <section class="section" id="home">
+      <div class="hero glass glow">
+        <div class="core-wrap">
+          <div class="core" id="ai-core" data-state="off">
+            <div class="ring r2"></div><div class="ring r3"></div><div class="glow-orb"></div>
+            <div class="mark">JARVIS</div>
+          </div>
+          <div class="core-caption"><div class="state" id="core-state">OFF</div><div class="hint" id="core-hint">Voice is off</div></div>
+        </div>
+        <div class="hero-right">
+          <div class="status-grid" id="hero-status">
+            <div class="stat"><div class="k">Voice</div><div class="v" id="hs-voice">–</div></div>
+            <div class="stat"><div class="k">Microphone</div><div class="v" id="hs-mic">–</div></div>
+            <div class="stat"><div class="k">Language model</div><div class="v" id="hs-llm">–</div></div>
+            <div class="stat"><div class="k">Database</div><div class="v" id="hs-db">–</div></div>
+          </div>
+          <div class="command">
+            <input id="chat-input" type="text" placeholder="Ask JARVIS anything…" aria-label="Ask JARVIS anything" autocomplete="off">
+            <button class="send" id="chat-send">Ask</button>
+          </div>
+          <div class="chatlog" id="chatlog" aria-live="polite"></div>
+          <div class="quick-actions" id="quick-actions"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= OVERVIEW GRID ================= -->
+    <section class="section" id="overview">
+      <div class="section-head"><h2>Overview</h2></div>
+      <div class="grid wide-2">
+        <div class="panel glass" id="gmail-panel"><h3><span class="t">✉ Gmail</span></h3><div id="gmail">Loading…</div></div>
+        <div class="panel glass" id="calendar-panel"><h3><span class="t">📅 Calendar</span></h3><div id="calendar">Loading…</div></div>
+        <div class="panel glass" id="resources-panel"><h3><span class="t">◫ System Resources</span></h3><div id="resources">Loading…</div></div>
+        <div class="panel glass" id="integrations-health-panel"><h3><span class="t">⬡ Integration Health</span></h3><div id="integrations-health">Loading…</div></div>
+        <div class="panel glass span-2" id="schedule-panel"><h3><span class="t">◷ Today's Schedule</span></h3><ul class="list" id="schedule"></ul></div>
+        <div class="panel glass span-2" id="activity-panel"><h3><span class="t">≡ Recent Activity</span></h3><ul class="list" id="audit"></ul></div>
+      </div>
+    </section>
+
+    <!-- ================= VOICE ================= -->
+    <section class="section" id="voice-section">
+      <div class="section-head"><h2>Voice</h2></div>
+      <div class="panel glass" id="voice-panel"><div id="voice">Loading…</div>
+        <p class="small muted">Only state, short text and timings are shown. Audio is never recorded, stored or displayed.</p></div>
+    </section>
+
+    <!-- ================= CHAT (full log) ================= -->
+    <section class="section" id="chat-section">
+      <div class="section-head"><h2>Chat with JARVIS</h2></div>
+      <div class="panel glass">
+        <p class="small muted">The same agent, planner, tool router and permission manager voice uses — a separate conversation session.</p>
+        <div class="chatlog" id="chatlog-full" style="max-height:420px"></div>
+        <div class="command" style="margin-top:10px;">
+          <input id="chat-input-2" type="text" placeholder="Ask JARVIS anything…" aria-label="Ask JARVIS anything" autocomplete="off">
+          <button class="send" id="chat-send-2">Ask</button>
+        </div>
+        <div class="row"><button class="btn" id="chat-reset">New chat</button></div>
+      </div>
+    </section>
+
+    <!-- ================= GMAIL (detail) ================= -->
+    <section class="section" id="gmail-section">
+      <div class="section-head"><h2>Gmail</h2></div>
+      <div class="panel glass wide" id="gmail-panel-2">
+        <p class="small muted">Read-only access (gmail.readonly): JARVIS can search and read mail but never send, delete or change it.</p>
+        <div id="gmail-2">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ================= CALENDAR (detail) ================= -->
+    <section class="section" id="calendar-section">
+      <div class="section-head"><h2>Calendar</h2></div>
+      <div class="panel glass" id="calendar-detail">Loading…</div>
+    </section>
+
+    <!-- ================= TASKS ================= -->
+    <section class="section" id="tasks-section">
+      <div class="section-head"><h2>Tasks &amp; Reminders</h2></div>
+      <div class="grid">
+        <div class="panel glass"><div id="tasks-panel">Loading…</div>
+          <p class="small muted">Concise action descriptions only: no hidden reasoning, page text or credentials. Higher-risk steps wait for your confirmation.</p></div>
+        <div class="panel glass"><h3>Deadlines</h3><ul class="list" id="deadlines"></ul></div>
+        <div class="panel glass"><h3>Pending tasks</h3><ul class="list" id="tasks"></ul></div>
+        <div class="panel glass"><h3>Conflicts</h3><ul class="list" id="conflicts"></ul></div>
+      </div>
+    </section>
+
+    <!-- ================= MEMORY ================= -->
+    <section class="section" id="memory-section">
+      <div class="section-head"><h2>Memory</h2></div>
+      <div class="panel glass" id="memory-panel">Loading…</div>
+    </section>
+
+    <!-- ================= PROJECTS / OPERATOR ================= -->
+    <section class="section" id="projects-section">
+      <div class="section-head"><h2>Personal Operator</h2></div>
+      <div class="panel glass" id="operator-panel">Loading…</div>
+      <div class="panel glass" style="margin-top:14px;"><h3>Recommendations</h3><ul class="list" id="recs"></ul></div>
+    </section>
+
+    <!-- ================= BROWSER ================= -->
+    <section class="section" id="browser-section">
+      <div class="section-head"><h2>Browser</h2></div>
+      <div class="panel glass"><div id="browser">Loading…</div>
+        <p class="small muted">Only the state is shown: the page address without its query string, the title, and whether the last action was verified. Cookies, credentials and page content are never displayed.</p></div>
+    </section>
+
+    <!-- ================= SYSTEM ================= -->
+    <section class="section" id="system-section">
+      <div class="section-head"><h2>System</h2></div>
+      <div class="grid">
+        <div class="panel glass"><h3>Runtime</h3><div id="system">Loading…</div></div>
+        <div class="panel glass"><h3>Privacy</h3><div id="privacy">Loading…</div></div>
+        <div class="panel glass"><h3>Performance (measured)</h3><div id="perf">Loading…</div></div>
+        <div class="panel glass"><h3>Active context &amp; sources</h3><div id="context">Loading…</div></div>
+      </div>
+      <div class="panel glass" style="margin-top:14px;"><h3>Services</h3><div id="services">Loading…</div></div>
+      <div class="panel glass" style="margin-top:14px;"><h3>Integrations</h3><div id="integrations" class="grid">Loading…</div>
+        <p class="small muted">Status comes from the integration hub's recorded facts (last sync, last error). Write permissions are off until you turn them on, and every use still asks you first.</p></div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section class="section" id="settings-section">
+      <div class="section-head"><h2>Settings &amp; Notifications</h2></div>
+      <div class="grid">
+        <div class="panel glass"><h3>Notifications</h3><ul class="list" id="notes"></ul></div>
+        <div class="panel glass"><h3>Events</h3><ul class="list" id="events"></ul></div>
+      </div>
+    </section>
+
+    <footer style="text-align:center; padding: 20px 0 10px; color:var(--jarvis-dim); font-size:11.5px;" id="statusbar">JARVIS</footer>
+  </main>
+</div>
+
 <script>
+"use strict";
 const TOKEN = "__JARVIS_TOKEN__";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 async function api(path, options = {}) {
   const r = await fetch(path, { ...options, headers: { "X-JARVIS-Token": TOKEN, "Content-Type": "application/json", ...(options.headers || {}) } });
-  if (!r.ok) { const t = await r.text(); throw new Error(r.status + " " + t.slice(0, 120)); }
+  if (!r.ok) { const t = await r.text(); throw new Error(r.status + " " + t.slice(0, 160)); }
   return r.json();
 }
 const when = (iso) => iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "no time";
 const list = (id, items, render, empty) => { $(id).innerHTML = items.length ? items.map((i) => "<li>" + render(i) + "</li>").join("") : '<li class="muted">' + esc(empty) + "</li>"; };
-
-const ICON = { healthy: "🟢", connected: "🟢", syncing: "🔄", degraded: "🟡", authenticating: "🟡", disconnected: "⚪", error: "🔴", disabled: "⚫" };
 const ago = (iso) => { if (!iso) return "never"; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 172800 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " days ago"; };
 const OPT_IN = ["CREATE_EVENT", "UPDATE_EVENT", "DELETE_EVENT", "READ_ATTACHMENT", "INDEX_DOCUMENTS"];
+
+/* ============================== ICONS (inline SVG, no external assets/CDN) ============================== */
+const ICONS = {
+  home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/>', chat: '<path d="M4 5h16v11H8l-4 3z"/>',
+  mic: '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>', cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  task: '<path d="M9 11l2 2 4-4"/><rect x="3" y="4" width="18" height="16" rx="2"/>', brain: '<path d="M9 3a3 3 0 0 0-3 3v1a3 3 0 0 0-2 5 3 3 0 0 0 2 5v1a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M15 3a3 3 0 0 1 3 3v1a3 3 0 0 1 2 5 3 3 0 0 1-2 5v1a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/>',
+  folder: '<path d="M3 7h6l2 2h10v10H3z"/>', globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>',
+  cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.6 1z"/>',
+  bolt: '<path d="M13 2 4 14h6l-1 8 9-12h-6z"/>',
+};
+const icon = (name) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || "") + "</svg>";
+
+/* ============================== SIDEBAR NAV ============================== */
+const NAV = [
+  ["home", "Home", "home"], ["chat-section", "Chat", "chat"], ["voice-section", "Voice", "mic"], ["gmail-section", "Gmail", "mail"],
+  ["calendar-section", "Calendar", "cal"], ["tasks-section", "Tasks", "task"], ["memory-section", "Memory", "brain"],
+  ["projects-section", "Projects", "folder"], ["browser-section", "Browser", "globe"], ["system-section", "System", "cpu"], ["settings-section", "Settings", "gear"],
+];
+$("navlist").innerHTML = NAV.map(([id, label]) => '<button data-target="' + id + '" class="navbtn">' + icon(NAV.find((n) => n[0] === id)[2]) + '<span class="label">' + label + "</span></button>").join("");
+document.querySelectorAll(".navbtn").forEach((b) => b.onclick = () => { $(b.dataset.target).scrollIntoView({ behavior: "smooth", block: "start" }); $("sidebar").classList.remove("open"); });
+const sections = NAV.map(([id]) => $(id)).filter(Boolean);
+const navBtn = (id) => document.querySelector('.navbtn[data-target="' + id + '"]');
+if ("IntersectionObserver" in window) {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) { document.querySelectorAll(".navbtn.active").forEach((b) => b.classList.remove("active")); const b = navBtn(e.target.id); if (b) b.classList.add("active"); } });
+  }, { rootMargin: "-40% 0px -55% 0px" });
+  sections.forEach((s) => io.observe(s));
+}
+$("sidebar-toggle").onclick = () => $("app").classList.toggle("collapsed");
+$("menu-toggle").onclick = () => $("sidebar").classList.toggle("open");
+
+/* ============================== CLOCK + GREETING ============================== */
+function tickClock() {
+  const now = new Date();
+  $("clock-time").textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  $("clock-date").textContent = now.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  const h = now.getHours();
+  const part = h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening";
+  $("greeting").textContent = "Good " + part + (window.__jarvisWho ? ", " + window.__jarvisWho : "") + ".";
+}
+tickClock(); setInterval(tickClock, 15000);
+
+/* ============================== AI CORE ============================== */
+const CORE_HINT = {
+  off: "Voice is off", sleeping: 'Say "Hey JARVIS" to wake', waiting: "Listening for the wake phrase",
+  listening: "Listening…", transcribing: "Thinking…", thinking: "Thinking…", speaking: "JARVIS is speaking…", error: "Voice system error",
+};
+function renderCore(voiceEnabled, voiceState, hasError) {
+  const state = hasError ? "error" : !voiceEnabled ? "off" : (voiceState === "waiting" ? "sleeping" : (voiceState || "sleeping"));
+  const core = $("ai-core");
+  core.dataset.state = state;
+  $("core-state").textContent = state.toUpperCase();
+  $("core-hint").textContent = CORE_HINT[state] || CORE_HINT[voiceState] || "—";
+}
+
+/* ============================== CHAT (command bar + full log) ============================== */
+function bubble(role, text, isError) {
+  return '<div class="bubble ' + role + (isError ? " error" : "") + '">' + esc(text) + "</div>";
+}
+let chatBusy = false;
+async function sendChat(text, inputEl, sendBtn) {
+  text = (text || "").trim();
+  if (!text || chatBusy) return;
+  chatBusy = true; if (sendBtn) sendBtn.disabled = true;
+  [$("chatlog"), $("chatlog-full")].forEach((el) => { el.insertAdjacentHTML("beforeend", bubble("user", text)); el.scrollTop = el.scrollHeight; });
+  if (inputEl) inputEl.value = "";
+  try {
+    const r = await api("/chat", { method: "POST", body: JSON.stringify({ text }) });
+    [$("chatlog"), $("chatlog-full")].forEach((el) => { el.insertAdjacentHTML("beforeend", bubble("assistant", r.reply, !r.ok)); el.scrollTop = el.scrollHeight; });
+  } catch (e) {
+    [$("chatlog"), $("chatlog-full")].forEach((el) => { el.insertAdjacentHTML("beforeend", bubble("assistant", e.message, true)); el.scrollTop = el.scrollHeight; });
+  } finally { chatBusy = false; if (sendBtn) sendBtn.disabled = false; }
+}
+$("chat-send").onclick = () => sendChat($("chat-input").value, $("chat-input"), $("chat-send"));
+$("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat($("chat-input").value, $("chat-input"), $("chat-send")); });
+$("chat-send-2").onclick = () => sendChat($("chat-input-2").value, $("chat-input-2"), $("chat-send-2"));
+$("chat-input-2").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat($("chat-input-2").value, $("chat-input-2"), $("chat-send-2")); });
+$("chat-reset").onclick = async () => { try { await api("/chat/reset", { method: "POST", body: "{}" }); $("chatlog-full").innerHTML = ""; $("chatlog").innerHTML = ""; } catch (e) { alert(e.message); } };
+async function loadChatHistory() {
+  try {
+    const h = await api("/chat/history");
+    const html = h.messages.map((m) => bubble(m.role, m.text, false)).join("");
+    $("chatlog-full").innerHTML = html;
+    $("chatlog").innerHTML = h.messages.slice(-6).map((m) => bubble(m.role, m.text, false)).join("");
+  } catch (e) { /* chat not running yet; command bar will report the error on send */ }
+}
+
+const QUICK_ACTIONS = [
+  ["bolt", "Talk to JARVIS", () => api("/voice/activate", { method: "POST", body: "{}" }).catch((e) => alert(e.message))],
+  ["mail", "Summarize Latest Email", () => sendChat("Summarize my latest email")],
+  ["cal", "What's On My Calendar?", () => sendChat("What's on my calendar today?")],
+  ["task", "Create a Task", () => sendChat("Create a task")],
+  ["globe", "Open GitHub", () => sendChat("Open GitHub")],
+  ["chat", "Ask JARVIS", () => $("chat-input").focus()],
+];
+$("quick-actions").innerHTML = QUICK_ACTIONS.map(([ic, label], i) => '<button class="qa-btn" data-i="' + i + '">' + icon(ic) + "<span>" + esc(label) + "</span></button>").join("");
+document.querySelectorAll(".qa-btn").forEach((b) => b.onclick = () => QUICK_ACTIONS[+b.dataset.i][2]());
+
+/* ============================== INTEGRATIONS (generic cards, reused for Gmail & Calendar too) ============================== */
 async function act(name, action, body) { try { await api("/integrations/" + name + "/" + action, { method: "POST", body: JSON.stringify(body || {}) }); } catch (e) { alert(e.message); } loadIntegrations(); }
+function integrationCard(i) {
+  const perms = i.permissions_available.map((p) => '<label class="small" style="display:block"><input type="checkbox" data-n="' + esc(i.name) + '" data-p="' + esc(p) + '" ' + (i.permissions_granted.includes(p) ? "checked" : "") + "> " + esc(p) + (OPT_IN.includes(p) ? " (opt-in)" : "") + "</label>").join("");
+  return '<div><div class="row small muted">' + esc(i.detail) + '</div><div class="row small">Last sync: ' + ago(i.last_sync_at) + " · items stored: " + i.items + "</div>" +
+    (i.last_error ? '<div class="row small err">' + esc(i.last_error_kind) + ": " + esc(i.last_error) + "</div>" : "") +
+    '<details><summary>Permissions</summary>' + (perms || '<span class="small muted">none</span>') + "</details><div class=\"row\">" +
+    (i.configured ? '<button class="btn" data-a="sync" data-n="' + esc(i.name) + '">Sync now</button> <button class="btn" data-a="disconnect" data-n="' + esc(i.name) + '">Disconnect</button>' : (i.manual_connect ? '<button class="btn" data-a="connect" data-n="' + esc(i.name) + '">Connect</button>' : "")) +
+    ' <button class="btn" data-a="' + (i.enabled ? "disable" : "enable") + '" data-n="' + esc(i.name) + '">' + (i.enabled ? "Turn off" : "Turn on") + "</button></div></div>";
+}
+let LAST_INTEGRATIONS = [];
 async function loadIntegrations() {
   try {
     const d = await api("/integrations");
-    $("integrations").innerHTML = d.integrations.map((i) => {
-      const perms = i.permissions_available.map((p) => '<label class="small" style="display:block"><input type="checkbox" data-n="' + esc(i.name) + '" data-p="' + esc(p) + '" ' + (i.permissions_granted.includes(p) ? "checked" : "") + "> " + esc(p) + (OPT_IN.includes(p) ? " (opt-in)" : "") + "</label>").join("");
-      return '<div class="card"><h3>' + (ICON[i.status] || "") + " " + esc(i.display_name) + ' <span class="pill ' + esc(i.status) + '">' + esc(i.status) + "</span></h3>" +
-        '<div class="row small muted">' + esc(i.detail) + '</div><div class="row small">Last sync: ' + ago(i.last_sync_at) + " · items stored: " + i.items + "</div>" +
-        (i.last_error ? '<div class="row small err">' + esc(i.last_error_kind) + ": " + esc(i.last_error) + "</div>" : "") +
-        '<details><summary>Permissions</summary>' + (perms || '<span class="small muted">none</span>') + "</details><div class=\"row\">" +
-        (i.configured ? '<button data-a="sync" data-n="' + esc(i.name) + '">Sync now</button><button data-a="disconnect" data-n="' + esc(i.name) + '">Disconnect</button>' : (i.manual_connect ? '<button data-a="connect" data-n="' + esc(i.name) + '">Connect</button>' : "")) +
-        '<button data-a="' + (i.enabled ? "disable" : "enable") + '" data-n="' + esc(i.name) + '">' + (i.enabled ? "Turn off" : "Turn on") + "</button></div></div>";
-    }).join("");
+    LAST_INTEGRATIONS = d.integrations;
+    $("integrations-health").innerHTML = '<div class="integ-grid">' + d.integrations.map((i) =>
+      '<div class="integ-item"><span>' + esc(i.display_name) + '</span><span class="pill ' + esc(i.status) + '"><span class="dot"></span>' + esc(i.status) + "</span></div>").join("") + "</div>";
+    $("integrations").innerHTML = d.integrations.map((i) =>
+      '<div class="card"><h4>' + esc(i.display_name) + ' <span class="pill ' + esc(i.status) + '"><span class="dot"></span>' + esc(i.status) + "</span></h4>" + integrationCard(i) + "</div>").join("");
     document.querySelectorAll("#integrations button").forEach((b) => b.onclick = () => {
       if (b.dataset.a === "disconnect" && !confirm("Disconnect " + b.dataset.n + "? Its saved sign-in is deleted.")) return;
       act(b.dataset.n, b.dataset.a, b.dataset.a === "disconnect" ? { purge: confirm("Also delete everything synchronized from it?"), revoke: true } : {});
     });
     document.querySelectorAll("#integrations input[type=checkbox]").forEach((c) => c.onchange = () => act(c.dataset.n, "permissions", { permission: c.dataset.p, granted: c.checked }));
-  } catch (e) { $("integrations").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+    const cal = d.integrations.find((i) => i.name === "calendar");
+    if (cal) {
+      const label = cal.status === "CONNECTED" || cal.status === "connected" ? "Connected" : (cal.status === "DISCONNECTED" || cal.status === "disconnected" || cal.status === "NOT_CONFIGURED" ? "Not connected" : cal.status);
+      $("calendar").innerHTML = '<div class="row"><span class="pill ' + esc(cal.status).toLowerCase() + '"><span class="dot"></span>' + esc(label) + "</span></div>" + integrationCard(cal);
+      $("calendar-detail").innerHTML = integrationCard(cal);
+    } else {
+      $("calendar").innerHTML = '<div class="empty-state">Calendar not connected<br><span class="small">Enable JARVIS_CALENDAR_ENABLED to connect it.</span></div>';
+      $("calendar-detail").innerHTML = $("calendar").innerHTML;
+    }
+    document.querySelectorAll("#calendar button, #calendar-detail button").forEach((b) => b.onclick = () => {
+      if (b.dataset.a === "disconnect" && !confirm("Disconnect Calendar? Its saved sign-in is deleted.")) return;
+      act(b.dataset.n, b.dataset.a, b.dataset.a === "disconnect" ? { purge: false, revoke: true } : {});
+    });
+  } catch (e) {
+    $("integrations-health").innerHTML = '<span class="err">' + esc(e.message) + "</span>";
+    $("integrations").innerHTML = '<span class="err">' + esc(e.message) + "</span>";
+    $("calendar").innerHTML = '<span class="err">' + esc(e.message) + "</span>";
+  }
 }
 
+/* ============================== VOICE ============================== */
 const VOICE_TOGGLES = [["voice_muted", "Mute voice"], ["voice_notifications", "Voice notifications"], ["dnd_enabled", "Do Not Disturb"]];
 async function voiceSet(changes) { try { await api("/voice/settings", { method: "POST", body: JSON.stringify(changes) }); } catch (e) { alert(e.message); } loadVoice(); }
 async function loadVoice() {
@@ -117,7 +576,11 @@ async function loadVoice() {
     const v = await api("/voice");
     const s = v.settings, w = v.wake_word, n = v.notifications, l = v.latency_ms || {};
     const lat = Object.entries(l).map(([k, x]) => esc(k.replace(/_ms$/, "")) + " " + Math.round(x) + " ms").join(" · ");
-    $("voice").innerHTML = "<table>" +
+    renderCore(v.enabled, v.voice_state, !!v.last_error);
+    $("hs-voice").innerHTML = v.enabled ? '<span class="pill ok"><span class="dot"></span>ON</span>' : '<span class="pill off"><span class="dot"></span>OFF</span>';
+    $("hs-mic").textContent = v.microphone === "MICROPHONE_CONNECTED" ? "Connected" : v.microphone === "MICROPHONE_CLOSED" ? "Released" : v.microphone || "–";
+    $("voice").innerHTML = "<div class=\"row\"><button id=\"voice-power\" class=\"btn " + (v.enabled ? "on" : "") + "\">JARVIS Voice: " + (v.enabled ? "ON" : "OFF") + "</button> <span class=\"muted small\">" + esc(v.mode || "") + "</span></div>" +
+      "<table>" +
       "<tr><td>State</td><td><span class=\"pill\">" + esc(v.state) + "</span> <span class=\"muted small\">(" + esc(v.voice_state) + ")</span>" + (v.conversation.active ? " · conversation active" : "") + (v.conversation.pending_action ? " · waiting for your " + esc(v.conversation.pending_action) : "") + "</td></tr>" +
       "<tr><td>Microphone</td><td>" + esc(v.microphone) + "</td></tr>" +
       "<tr><td>Wake word</td><td>“" + esc(w.phrase) + "” · " + (w.ready ? "ready" : w.ready === false ? "<span class=\"err\">not ready</span>" : "starting") + " · " + esc(w.health) + " · activations " + w.activations + " (no speech: " + w.false_activations + ") · sensitivity threshold " + w.sensitivity + "</td></tr>" +
@@ -128,104 +591,164 @@ async function loadVoice() {
       "<tr><td>Notifications</td><td>voice " + (n.voice_enabled ? "on" : "off") + " · Do Not Disturb " + (n.do_not_disturb ? "<b>on</b>" : "off") + " · queued " + n.queued + " · held back " + n.held + "</td></tr>" +
       (v.last_error ? "<tr><td>Last error</td><td class=\"err\">" + esc(v.last_error) + "</td></tr>" : "") +
       (lat ? "<tr><td>Latency (last)</td><td class=\"small\">" + lat + "</td></tr>" : "") + "</table>" +
-      "<div class=\"row\">" + VOICE_TOGGLES.map(([k, t]) => "<button data-k=\"" + k + "\" class=\"" + (s[k] ? "active" : "") + "\">" + t + ": " + (s[k] ? "on" : "off") + "</button>").join(" ") +
-      " <button data-x=\"stop\">Stop speaking</button> <button data-x=\"talk\">Talk to JARVIS</button></div>" +
-      "<div class=\"row small\"><label>Wake sensitivity threshold <input type=\"number\" step=\"0.05\" min=\"0.05\" max=\"0.99\" value=\"" + s.wake_sensitivity + "\" data-n=\"wake_sensitivity\" style=\"width:5em\"></label> " +
+      "<div class=\"row\">" + VOICE_TOGGLES.map(([k, t]) => "<button class=\"btn " + (s[k] ? "active" : "") + "\" data-k=\"" + k + "\">" + t + ": " + (s[k] ? "on" : "off") + "</button>").join(" ") +
+      " <button class=\"btn\" data-x=\"stop\">Stop speaking</button> <button class=\"btn\" data-x=\"talk\">Talk to JARVIS</button></div>" +
+      "<div class=\"row small\"><label>Wake sensitivity <input type=\"number\" step=\"0.05\" min=\"0.05\" max=\"0.99\" value=\"" + s.wake_sensitivity + "\" data-n=\"wake_sensitivity\" style=\"width:5em\"></label> " +
       "<label>Speed <input type=\"number\" step=\"0.1\" min=\"0.5\" max=\"2\" value=\"" + s.tts_speed + "\" data-n=\"tts_speed\" style=\"width:4em\"></label> " +
-      "<label>Volume <input type=\"number\" step=\"0.1\" min=\"0\" max=\"1\" value=\"" + s.tts_volume + "\" data-n=\"tts_volume\" style=\"width:4em\"></label> " +
+      "<label>Volume <input type=\"number\" step=\"0.1\" min=\"0\" max=\"2\" value=\"" + s.tts_volume + "\" data-n=\"tts_volume\" style=\"width:4em\"></label> " +
       "<label>Silence (s) <input type=\"number\" step=\"0.1\" min=\"0.3\" max=\"5\" value=\"" + s.silence_seconds + "\" data-n=\"silence_seconds\" style=\"width:4em\"></label></div>";
     document.querySelectorAll("#voice button[data-k]").forEach((b) => b.onclick = () => voiceSet({ [b.dataset.k]: !s[b.dataset.k] }));
     document.querySelectorAll("#voice input[data-n]").forEach((i) => i.onchange = () => voiceSet({ [i.dataset.n]: parseFloat(i.value) }));
     document.querySelectorAll("#voice button[data-x]").forEach((b) => b.onclick = async () => { try { await api(b.dataset.x === "stop" ? "/voice/interrupt" : "/voice/activate", { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } setTimeout(loadVoice, 500); });
-  } catch (e) { $("voice").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+    document.getElementById("voice-power").onclick = async () => { try { await api(v.enabled ? "/voice/disable" : "/voice/enable", { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } loadVoice(); };
+  } catch (e) { $("voice").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; renderCore(false, null, true); }
 }
 
-const BROWSER_DOT = { ready: "🟢", closed: "⚪", opening: "🟡", navigating: "🟡", waiting: "🟡", action: "🟡", recovering: "🟠", closing: "🟡", error: "🔴" };
-async function browserAct(path) { try { await api(path, { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } setTimeout(loadBrowser, 300); }
-const TASK_DOT = { RUNNING: "🟢", VERIFYING: "🟢", PLANNING: "🟡", PAUSED: "🟡", WAITING_FOR_USER: "🟠", WAITING_FOR_PERMISSION: "🟠", COMPLETED: "✅", FAILED: "🔴", CANCELLED: "⚪", BLOCKED: "🟠" };
+/* ============================== GMAIL ============================== */
+const GMAIL_ICON_CLASS = { CONNECTED: "connected", NOT_CONFIGURED: "off", AUTH_REQUIRED: "warn", DISCONNECTED: "off", TOKEN_EXPIRED: "bad", PERMISSION_DENIED: "bad", API_ERROR: "bad", NETWORK_ERROR: "warn", RATE_LIMITED: "warn" };
+async function gmailAct(kind) {
+  try {
+    if (kind === "connect") await api("/integrations/gmail/connect", { method: "POST", body: "{}" });
+    else if (kind === "disconnect") { if (!confirm("Disconnect Gmail? Its saved sign-in is deleted.")) return; await api("/integrations/gmail/disconnect", { method: "POST", body: JSON.stringify({ purge: false, revoke: true }) }); }
+  } catch (e) { alert(e.message); }
+  loadGmail();
+}
+async function loadGmail() {
+  try {
+    const g = await api("/integrations/gmail/status");
+    const label = g.status === "CONNECTED" ? "Connected" : g.status === "DISCONNECTED" || g.status === "NOT_CONFIGURED" || g.status === "AUTH_REQUIRED" ? "Disconnected" : "Error";
+    window.__jarvisWho = g.account ? g.account.split("@")[0] : window.__jarvisWho;
+    const body = '<div class="row"><span class="pill ' + esc(g.status) + '"><span class="dot"></span>' + esc(label) + "</span></div>" +
+      '<div class="row small">' + esc(g.message) + "</div>" +
+      '<div class="row small">Account: ' + esc(g.account || "not connected") + " · Scope: " + esc(g.scope) + "</div>" +
+      '<div class="row small">OAuth: ' + esc(g.oauth) + " · Last check: " + ago(g.checked_at) + "</div>" +
+      '<div class="row"><button class="btn" data-g="connect">Connect Gmail</button> <button class="btn" data-g="disconnect">Disconnect</button> <button class="btn" data-g="refresh">Test connection</button> <button class="btn" data-g="refresh">Refresh status</button></div>';
+    $("gmail").innerHTML = body; $("gmail-2").innerHTML = body;
+    document.querySelectorAll("#gmail button[data-g], #gmail-2 button[data-g]").forEach((b) => b.onclick = () => gmailAct(b.dataset.g));
+  } catch (e) { $("gmail").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; $("gmail-2").innerHTML = $("gmail").innerHTML; }
+}
+
+/* ============================== SYSTEM RESOURCES ============================== */
+function ring(percent, ok) {
+  const p = Math.max(0, Math.min(100, percent || 0));
+  return '<div class="progress"><span style="width:' + p + '%; background:' + (ok === false ? "linear-gradient(90deg,#f87171,#fbbf24)" : "linear-gradient(90deg,var(--jarvis-cyan),var(--jarvis-blue))") + '"></span></div>';
+}
+async function loadResources(health) {
+  try {
+    const m = await api("/metrics");
+    const cpu = m.cpu_percent, mem = m.memory_mb, disk = m.disk;
+    const llmHealthy = health ? (health.services.find((s) => s.name === "llm") || {}).state === "healthy" : null;
+    const network = llmHealthy === null ? "Unknown" : llmHealthy ? "Connected" : "Degraded";
+    $("resources").innerHTML =
+      '<div class="row"><div class="small muted">CPU (this process)</div><div class="v">' + (cpu != null ? cpu + "%" : "N/A") + "</div>" + (cpu != null ? ring(cpu) : "") + "</div>" +
+      '<div class="row"><div class="small muted">Memory (this process)</div><div class="v">' + (mem != null ? Math.round(mem) + " MB" : "N/A") + "</div></div>" +
+      '<div class="row"><div class="small muted">Disk</div><div class="v">' + (disk ? disk.percent_used + "% used · " + disk.free_gb + " GB free" : "N/A") + "</div>" + (disk ? ring(disk.percent_used) : "") + "</div>" +
+      '<div class="row"><div class="small muted">Network</div><div class="v"><span class="pill ' + (network === "Connected" ? "ok" : network === "Degraded" ? "warn" : "off") + '"><span class="dot"></span>' + network + "</span></div></div>";
+  } catch (e) { $("resources").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+}
+
+/* ============================== MEMORY (honest, health-derived) ============================== */
+function renderMemory(health) {
+  const svc = health ? health.services.find((s) => s.name === "memory") : null;
+  if (!svc) { $("memory-panel").innerHTML = '<div class="empty-state">Memory status unavailable<br><span class="small">The personal memory service is not reporting health.</span></div>'; return; }
+  const on = svc.state === "healthy";
+  $("memory-panel").innerHTML = '<div class="row"><span class="pill ' + esc(svc.state) + '"><span class="dot"></span>' + (on ? "Enabled" : svc.state) + '</span></div><p class="small muted">' + esc(svc.detail) +
+    '</p><p class="small muted">JARVIS extracts durable facts from what you say and recalls them in later conversations, in voice and here. There is no separate memory browser yet — memories surface naturally when relevant.</p>';
+}
+
+/* ============================== TASKS / OPERATOR / BROWSER (unchanged logic, restyled containers) ============================== */
+const TASK_DOT = { RUNNING: "ok", VERIFYING: "ok", PLANNING: "warn", PAUSED: "warn", WAITING_FOR_USER: "warn", WAITING_FOR_PERMISSION: "warn", COMPLETED: "ok", FAILED: "bad", CANCELLED: "off", BLOCKED: "warn" };
 async function taskAct(path) { try { await api(path, { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } setTimeout(loadTasks, 300); }
 async function loadTasks() {
   try {
     const d = await api("/tasks");
     const c = d.current;
     const hist = d.history.slice(0, 8).map((h) => "<li>" + (h.status === "COMPLETED" ? "✓" : h.status === "CANCELLED" ? "○" : "✗") + " " + esc(h.goal) + ' <span class="muted small">' + esc(h.status) + " · " + esc(h.at) + " · " + h.duration_s + " s" + (h.status !== "COMPLETED" && h.outcome ? " · " + esc(h.outcome) : "") + "</span></li>").join("");
-    const live = c ? "<table><tr><td>Current task</td><td>" + esc(c.goal) + "</td></tr><tr><td>Status</td><td>" + (TASK_DOT[c.status] || "") + " " + esc(c.status) + "</td></tr><tr><td>Progress</td><td>" + c.progress[0] + " / " + c.progress[1] + "</td></tr>" +
+    const live = c ? "<table><tr><td>Current task</td><td>" + esc(c.goal) + "</td></tr><tr><td>Status</td><td><span class=\"pill " + (TASK_DOT[c.status] || "") + "\">" + esc(c.status) + "</span></td></tr><tr><td>Progress</td><td>" + c.progress[0] + " / " + c.progress[1] + "</td></tr>" +
       "<tr><td>Current action</td><td>" + esc(c.current_action || "–") + "</td></tr><tr><td>Verification</td><td>" + (c.verified === true ? "✓" : c.verified === false ? "✗" : "–") + "</td></tr><tr><td>Risk</td><td>" + esc(c.risk) + "</td></tr>" +
       (c.question ? '<tr><td>Waiting for you</td><td class="err">' + esc(c.question) + "</td></tr>" : "") + (c.failure ? '<tr><td>Failure</td><td class="err">' + esc(c.failure) + "</td></tr>" : "") +
-      (c.result ? "<tr><td>Result</td><td>" + esc(c.result) + "</td></tr>" : "") + "</table><ol>" + c.steps.map((s) => "<li>" + esc(s.description) + ' <span class="muted small">' + esc(s.status) + (s.risk !== "READ_ONLY" ? " · " + esc(s.risk) : "") + "</span></li>").join("") + "</ol>" : '<p class="muted">No task yet.</p>';
-    $("tasks-panel").innerHTML = live + '<div class="row"><button data-t="/tasks/pause">Pause</button> <button data-t="/tasks/resume">Resume</button> <button data-t="/tasks/cancel">Stop task</button></div><h3>Recent tasks</h3><ul>' + (hist || '<li class="muted">None yet.</li>') + "</ul>";
+      (c.result ? "<tr><td>Result</td><td>" + esc(c.result) + "</td></tr>" : "") + "</table><ol>" + c.steps.map((s) => "<li>" + esc(s.description) + ' <span class="muted small">' + esc(s.status) + (s.risk !== "READ_ONLY" ? " · " + esc(s.risk) : "") + "</span></li>").join("") + "</ol>" : '<div class="empty-state">No task running<br><span class="small">Ask JARVIS to do something and it will show up here.</span></div>';
+    $("tasks-panel").innerHTML = "<h3>Autonomous task</h3>" + live + '<div class="row"><button class="btn" data-t="/tasks/pause">Pause</button> <button class="btn" data-t="/tasks/resume">Resume</button> <button class="btn" data-t="/tasks/cancel">Stop task</button></div><h3>Recent tasks</h3><ul class="list">' + (hist || '<li class="muted">None yet.</li>') + "</ul>";
     document.querySelectorAll("#tasks-panel button[data-t]").forEach((x) => x.onclick = () => taskAct(x.dataset.t));
   } catch (e) { $("tasks-panel").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
 }
 
-const WF_DOT = { RUNNING: "🟢", PLANNING: "🟡", READY: "🟡", PAUSED: "🟡", WAITING_FOR_DATA: "🟠", WAITING_FOR_USER: "🟠", WAITING_FOR_CONFIRMATION: "🟠", COMPLETED: "✅", FAILED: "🔴", CANCELLED: "⚪", DRAFT: "⚪" };
+const WF_DOT = { RUNNING: "ok", PLANNING: "warn", READY: "warn", PAUSED: "warn", WAITING_FOR_DATA: "warn", WAITING_FOR_USER: "warn", WAITING_FOR_CONFIRMATION: "warn", COMPLETED: "ok", FAILED: "bad", CANCELLED: "off", DRAFT: "off" };
 async function wfAct(path, body) { try { await api(path, { method: "POST", body: JSON.stringify(body || {}) }); } catch (e) { alert(e.message); } setTimeout(loadOperator, 300); }
 async function loadOperator() {
   try {
     const d = await api("/workflows");
     const c = d.current;
-    const sys = Object.entries(d.systems).map(([k, v]) => (v ? "🟢 " : "⚪ ") + esc(k)).join(" · ");
+    const sys = Object.entries(d.systems).map(([k, v]) => '<span class="pill ' + (v ? "ok" : "off") + '"><span class="dot"></span>' + esc(k) + "</span>").join(" ");
     const hist = d.history.slice(0, 8).map((h) => "<li>" + (h.status === "COMPLETED" ? "✓" : h.status === "CANCELLED" ? "○" : "✗") + " " + esc(h.goal) + ' <span class="muted small">' + esc(h.status) + " · " + esc(h.at) + " · " + h.duration_s + " s" + (h.status !== "COMPLETED" && (h.failure || h.result) ? " · " + esc(h.failure || h.result) : "") + "</span></li>").join("");
-    const live = c ? "<table><tr><td>Current workflow</td><td>" + esc(c.goal) + "</td></tr><tr><td>Status</td><td>" + (WF_DOT[c.status] || "") + " " + esc(c.status) + "</td></tr><tr><td>Progress</td><td>" + c.progress[0] + " / " + c.progress[1] + " · " + c.duration_s + " s</td></tr>" +
+    const live = c ? "<table><tr><td>Current workflow</td><td>" + esc(c.goal) + "</td></tr><tr><td>Status</td><td><span class=\"pill " + (WF_DOT[c.status] || "") + "\">" + esc(c.status) + "</span></td></tr><tr><td>Progress</td><td>" + c.progress[0] + " / " + c.progress[1] + " · " + c.duration_s + " s</td></tr>" +
       "<tr><td>Current step</td><td>" + esc(c.current_step || "–") + "</td></tr><tr><td>Risk</td><td>" + esc(c.risk) + "</td></tr><tr><td>Sources</td><td>" + esc(c.sources.join(", ") || "–") + "</td></tr>" +
       (c.question ? '<tr><td>Waiting for you</td><td class="err">' + esc(c.question) + "</td></tr>" : "") + (c.failure ? '<tr><td>Problem</td><td class="err">' + esc(c.failure) + "</td></tr>" : "") +
       (c.warnings.length ? "<tr><td>Warnings</td><td>" + c.warnings.map(esc).join("<br>") + "</td></tr>" : "") + "</table><ol>" +
       c.steps.map((x) => "<li>" + esc(x.description) + ' <span class="muted small">' + esc(x.status) + (x.risk !== "READ_ONLY" ? " · " + esc(x.risk) : "") + (x.note ? " · " + esc(x.note) : "") + "</span></li>").join("") + "</ol>" +
-      '<div class="row">' + (c.status === "WAITING_FOR_CONFIRMATION" ? '<button data-w="/workflows/' + esc(c.workflow_id) + '/confirm" data-a="1">Confirm</button> <button data-w="/workflows/' + esc(c.workflow_id) + '/confirm" data-a="0">Decline</button> ' : "") +
-      '<button data-w="/workflows/' + esc(c.workflow_id) + '/pause">Pause</button> <button data-w="/workflows/' + esc(c.workflow_id) + '/resume">Resume</button> <button data-w="/workflows/' + esc(c.workflow_id) + '/cancel">Cancel workflow</button></div>' : '<p class="muted">No workflow running.</p>';
+      '<div class="row">' + (c.status === "WAITING_FOR_CONFIRMATION" ? '<button class="btn" data-w="/workflows/' + esc(c.workflow_id) + '/confirm" data-a="1">Confirm</button> <button class="btn" data-w="/workflows/' + esc(c.workflow_id) + '/confirm" data-a="0">Decline</button> ' : "") +
+      '<button class="btn" data-w="/workflows/' + esc(c.workflow_id) + '/pause">Pause</button> <button class="btn" data-w="/workflows/' + esc(c.workflow_id) + '/resume">Resume</button> <button class="btn" data-w="/workflows/' + esc(c.workflow_id) + '/cancel">Cancel workflow</button></div>' : '<div class="empty-state">No workflow running</div>';
     const waiting = d.waiting.filter((w) => !c || w.workflow_id !== c.workflow_id).map((w) => "<li>" + esc(w.goal) + ' <span class="muted small">' + esc(w.status) + "</span></li>").join("");
     const failed = d.failed.map((w) => "<li>" + esc(w.goal) + ' <span class="err small">' + esc(w.failure_kind || "") + " · " + esc(w.failure) + "</span></li>").join("");
     $("operator-panel").innerHTML = '<p class="small">Connected systems: ' + sys + "</p>" + live +
-      (waiting ? "<h3>Waiting</h3><ul>" + waiting + "</ul>" : "") + (failed ? "<h3>Failed</h3><ul>" + failed + "</ul>" : "") + "<h3>Recent workflows</h3><ul>" + (hist || '<li class="muted">None yet.</li>') + "</ul>";
+      (waiting ? "<h3>Waiting</h3><ul class=\"list\">" + waiting + "</ul>" : "") + (failed ? "<h3>Failed</h3><ul class=\"list\">" + failed + "</ul>" : "") + "<h3>Recent workflows</h3><ul class=\"list\">" + (hist || '<li class="muted">None yet.</li>') + "</ul>";
     document.querySelectorAll("#operator-panel button[data-w]").forEach((x) => x.onclick = () => wfAct(x.dataset.w, x.dataset.a !== undefined ? { approve: x.dataset.a === "1" } : {}));
   } catch (e) { $("operator-panel").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
 }
 
+const BROWSER_STATE_PILL = { ready: "ok", closed: "off", opening: "warn", navigating: "warn", waiting: "warn", action: "warn", recovering: "warn", closing: "warn", error: "bad" };
+async function browserAct(path) { try { await api(path, { method: "POST", body: "{}" }); } catch (e) { alert(e.message); } setTimeout(loadBrowser, 300); }
 async function loadBrowser() {
   try {
     const b = await api("/browser");
     const tabs = b.tabs.map((t) => "<li>" + (t.active ? "▶ " : "") + esc(t.tab_id) + " · " + esc(t.title || "(untitled)") + ' <span class="muted small">' + esc(t.url) + "</span></li>").join("");
-    $("browser").innerHTML = "<table>" +
-      "<tr><td>Status</td><td>" + (BROWSER_DOT[b.state] || "") + " " + esc(b.state) + (b.enabled ? "" : " (disabled)") + "</td></tr>" +
+    $("browser").innerHTML = "<h3>Browser</h3><table>" +
+      "<tr><td>Status</td><td><span class=\"pill " + (BROWSER_STATE_PILL[b.state] || "") + "\">" + esc(b.state) + "</span>" + (b.enabled ? "" : " (disabled)") + "</td></tr>" +
       "<tr><td>Active page</td><td>" + esc(b.title || "–") + "</td></tr><tr><td>URL</td><td>" + esc(b.url || "–") + "</td></tr>" +
       "<tr><td>Tabs</td><td>" + b.tab_count + (b.active_tab ? " · active " + esc(b.active_tab) : "") + "</td></tr>" +
       "<tr><td>Last action</td><td>" + esc(b.last_action || "–") + (b.last_result ? ' <span class="muted small">' + esc(b.last_result) + "</span>" : "") + "</td></tr>" +
       "<tr><td>Verified</td><td>" + (b.verified === true ? "✓" : b.verified === false ? "✗ not verified" : "–") + "</td></tr>" +
       (b.error ? '<tr><td>Last error</td><td class="err">' + esc(b.error) + "</td></tr>" : "") +
-      "<tr><td>Crashes / recoveries</td><td>" + b.crashes + " / " + b.recoveries + "</td></tr></table>" + (tabs ? "<ul>" + tabs + "</ul>" : "") +
-      '<div class="row"><button data-b="/browser/open">Open browser</button> <button data-b="/browser/close">Close browser</button> <button data-b="/browser/stop">Stop current action</button></div>';
+      "<tr><td>Crashes / recoveries</td><td>" + b.crashes + " / " + b.recoveries + "</td></tr></table>" + (tabs ? "<ul class=\"list\">" + tabs + "</ul>" : "") +
+      '<div class="row"><button class="btn" data-b="/browser/open">Open browser</button> <button class="btn" data-b="/browser/close">Close browser</button> <button class="btn" data-b="/browser/stop">Stop current action</button></div>';
     document.querySelectorAll("#browser button[data-b]").forEach((x) => x.onclick = () => browserAct(x.dataset.b));
   } catch (e) { $("browser").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
 }
 
+/* ============================== TOP-LEVEL LOAD ============================== */
 async function load() {
-  loadIntegrations();
-  loadVoice();
-  loadBrowser();
-  loadTasks();
-  loadOperator();
+  loadGmail(); loadIntegrations(); loadVoice(); loadBrowser(); loadTasks(); loadOperator(); loadChatHistory();
+  let health = null;
   try {
     const s = await api("/status");
-    $("headline").innerHTML = '<span class="pill ' + esc(s.overall || "") + '">' + esc((s.overall || "unknown").toUpperCase()) + "</span> " +
-      '<span class="pill">' + esc(s.voice_indicator_text || "Voice unknown") + '</span> <span class="pill">Privacy: ' + esc(s.privacy_mode) + "</span>" +
-      (s.offline_mode ? ' <span class="pill degraded">Offline mode</span>' : "");
+    $("headline-pill").innerHTML = '<span class="dot"></span>' + esc((s.overall || "unknown").toUpperCase());
+    $("headline-pill").className = "pill " + esc(s.overall || "");
+    $("greeting-sub").textContent = s.overall === "online" ? "JARVIS is ready." : (s.voice_indicator_text || "JARVIS is starting…");
     $("system").innerHTML = "<table><tr><td>Runtime</td><td>" + esc(s.runtime) + "</td></tr><tr><td>Voice state</td><td>" + esc(s.voice_state ?? "–") +
-      "</td></tr><tr><td>Microphone stream open</td><td>" + (s.microphone_active ? "yes" : "no") + "</td></tr>" +
+      "</td></tr><tr><td>Microphone stream open</td><td>" + (s.microphone_active ? "yes" : "no") + "</td></tr><tr><td>Privacy mode</td><td>" + esc(s.privacy_mode) + "</td></tr>" +
+      (s.offline_mode ? "<tr><td>Offline mode</td><td>on</td></tr>" : "") +
       (s.last_error ? '<tr><td>Last error</td><td class="err">' + esc(s.last_error) + "</td></tr>" : "") + "</table>";
-  } catch (e) { $("headline").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+    $("statusbar").textContent = "JARVIS — PID " + (s.process ? s.process.pid : "?") + " · started via " + (s.process ? s.process.startup_source : "?") + " · " + (s.overall || "unknown").toUpperCase();
+  } catch (e) { $("headline-pill").innerHTML = "Error"; $("greeting-sub").textContent = e.message; }
   try {
     const p = await api("/privacy");
-    $("privacy").innerHTML = ["active", "background", "paused", "private"].map((m) => '<button data-m="' + m + '" class="' + (p.mode === m ? "active" : "") + '">' + m + "</button>").join(" ") +
+    $("privacy").innerHTML = ["active", "background", "paused", "private"].map((m) => '<button class="btn ' + (p.mode === m ? "active" : "") + '" data-m="' + m + '">' + m + "</button>").join(" ") +
       '<p class="small muted">Microphone ' + (p.microphone ? "on" : "off") + " · wake word " + (p.wake_word ? "on" : "off") + " · external monitoring " +
       (p.external_monitoring ? "on" : "off") + " · notifications: " + esc(p.notifications) + "</p>";
     document.querySelectorAll("#privacy button").forEach((b) => b.onclick = async () => { await api("/privacy", { method: "POST", body: JSON.stringify({ mode: b.dataset.m }) }); load(); });
   } catch (e) { $("privacy").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
   try {
-    const h = await api("/health/services");
+    health = await api("/health/services");
     $("services").innerHTML = "<table><tr><th>Service</th><th>State</th><th>Detail</th></tr>" +
-      h.services.map((x) => "<tr><td>" + esc(x.name) + (x.critical ? " *" : "") + '</td><td><span class="pill ' + esc(x.state) + '">' + esc(x.state) + '</span></td><td class="muted">' + esc(x.detail) + "</td></tr>").join("") +
+      health.services.map((x) => "<tr><td>" + esc(x.name) + (x.critical ? " *" : "") + '</td><td><span class="pill ' + esc(x.state) + '"><span class="dot"></span>' + esc(x.state) + '</span></td><td class="muted">' + esc(x.detail) + "</td></tr>").join("") +
       '</table><p class="small muted">* critical. A service that is not set up shows as disabled, never as healthy.</p>';
-  } catch (e) { $("services").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+    const llm = health.services.find((x) => x.name === "llm");
+    $("hs-llm").innerHTML = llm ? '<span class="pill ' + esc(llm.state) + '"><span class="dot"></span>' + esc(llm.state) + "</span>" : "–";
+    const db = health.services.find((x) => x.name === "database");
+    $("hs-db").innerHTML = db ? '<span class="pill ' + esc(db.state) + '"><span class="dot"></span>' + esc(db.state) + "</span>" : "–";
+    renderMemory(health);
+  } catch (e) { $("services").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; renderMemory(null); }
+  loadResources(health);
   try {
     const d = await api("/intelligence/summary");
     list("deadlines", d.deadlines, (x) => "<b>" + esc(x.text) + '</b><br><span class="muted small">' + esc(x.kind.replace(/_/g, " ")) + " · " + when(x.due) + " · from " + esc(x.source) + " · " + esc(x.confidence) + " confidence</span>", "No open deadlines found.");
@@ -237,7 +760,17 @@ async function load() {
     $("context").innerHTML = "<p>Active: " + (d.active_context.length ? esc(d.active_context.join(", ")) : '<span class="muted">nothing yet</span>') + "</p><p>Projects: " +
       (d.projects.length ? esc(d.projects.join(", ")) : '<span class="muted">none detected</span>') + "</p><table>" +
       Object.entries(d.sources).map(([k, v]) => "<tr><td>" + esc(k) + '</td><td><span class="pill ' + (v === "ok" ? "healthy" : v === "unavailable" ? "failed" : "disabled") + '">' + esc(v.replace("_", " ")) + "</span></td></tr>").join("") + "</table>";
-  } catch (e) { ["deadlines", "events", "tasks", "conflicts", "recs", "context"].forEach((id) => $(id).innerHTML = '<li class="err">' + esc(e.message) + "</li>"); }
+    // Today's Schedule: events happening today + due-today deadlines + due-today tasks, chronological.
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today.getTime() + 86400000);
+    const inToday = (iso) => { if (!iso) return false; const t = new Date(iso); return t >= today && t < tomorrow; };
+    const items = [
+      ...d.events.filter((x) => inToday(x.when)).map((x) => ({ at: x.when, text: x.name, kind: "Event" })),
+      ...d.deadlines.filter((x) => inToday(x.due)).map((x) => ({ at: x.due, text: x.text, kind: "Deadline" })),
+      ...d.pending_tasks.filter((x) => inToday(x.due)).map((x) => ({ at: x.due, text: x.title, kind: "Task" })),
+    ].sort((a, b) => new Date(a.at) - new Date(b.at));
+    list("schedule", items, (x) => "<b>" + new Date(x.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "</b> " + esc(x.text) + ' <span class="muted small">' + esc(x.kind) + "</span>", "Nothing scheduled for today.");
+  } catch (e) { ["deadlines", "events", "tasks", "conflicts", "recs", "context", "schedule"].forEach((id) => $(id).innerHTML = '<li class="err">' + esc(e.message) + "</li>"); }
   try {
     const n = await api("/notifications");
     list("notes", n.history.slice(0, 8), (x) => "<b>" + esc(x.title) + '</b> <span class="muted small">' + esc(x.status) + " · " + when(x.created_at) + "</span><br>" + esc(x.body.slice(0, 160)), "No notifications yet.");
@@ -250,8 +783,9 @@ async function load() {
   } catch (e) { $("perf").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
   try {
     const a = await api("/audit?limit=8");
-    list("audit", a.entries.reverse(), (x) => "<b>" + esc(x.action) + "</b> · " + esc(x.result) + '<br><span class="muted small">' + esc(x.tool) + " · confirmation: " + esc(x.confirmation) + " · " + when(x.timestamp) + "</span>", "No actions have been taken.");
+    list("audit", a.entries.reverse(), (x) => "<b>" + esc(x.action) + "</b> · " + esc(x.result) + '<br><span class="muted small">' + esc(x.tool) + " · confirmation: " + esc(x.confirmation) + " · " + when(x.timestamp) + "</span>", "No actions have been taken yet.");
   } catch (e) { $("audit").innerHTML = '<li class="err">' + esc(e.message) + "</li>"; }
+  $("sidebar-foot").textContent = "v1.0.0 · " + (navigator.platform.includes("Win") ? "Windows" : navigator.platform);
 }
 load();
 setInterval(load, 10000);
@@ -259,6 +793,7 @@ setInterval(loadVoice, 2000);
 setInterval(loadBrowser, 3000);
 setInterval(loadTasks, 2000);
 setInterval(loadOperator, 2500);
+setInterval(loadChatHistory, 4000);
 </script>
 </body>
 </html>

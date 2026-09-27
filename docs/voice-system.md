@@ -303,3 +303,6 @@ This implementation was built and tested on the target machine, with real
 - The LLM's refusal to claim access to email/calendar/memory is prompt-based,
   not enforced by any permission check (there's nothing to permission yet
   in Phase 1 — no tools exist).
+
+## Behaviour after Windows starts (auto-start)
+After a Windows logon JARVIS is started by its Task Scheduler task (`docs/windows-runtime.md`), the tray icon appears, and the voice runtime goes `STARTING -> RUNNING -> WAITING`: the microphone listens for the wake word only. **Nothing is spoken at boot** - no "Yes?", no greeting: the acknowledgement exists only after a validated "Hey JARVIS" / "JARVIS" (`docs/VOICE_ARCHITECTURE.md`). If the audio subsystem is not ready yet the engine retries with a capped backoff (2, 4, 8, 16, 30 s) and starts listening the moment the microphone appears. After 120 s of inactivity, or "JARVIS sleep", the conversation ends and only the wake word is heard again.

@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timezone
 
 from integrations.gmail.base import GmailClient
-from integrations.gmail.models import GmailMessage, GmailNotFound, GmailSearchResult, GmailThread
+from integrations.gmail.models import GmailLabel, GmailMessage, GmailNotFound, GmailProfile, GmailSearchResult, GmailThread, GmailThreadList, GmailThreadSummary
 from integrations.gmail.parser import parse_message, parse_thread
 
 
@@ -69,6 +69,43 @@ class FakeGmailClient(GmailClient):
         self.raws = list(raws)
         self.calls: list[tuple] = []
         self.attachments: dict[tuple[str, str], bytes] = {}
+
+    fail: Exception | None = None
+    account = "owner@example.com"
+
+    def profile(self):
+        self.calls.append(("profile",))
+        if self.fail:
+            raise self.fail
+        return GmailProfile(email_address=self.account, messages_total=len(self.raws), threads_total=len({r["threadId"] for r in self.raws}))
+
+    def _count(self, label_id):
+        parsed = [parse_message(r) for r in self.raws]
+        return [m for m in parsed if label_id in m.labels]
+
+    def list_labels(self):
+        self.calls.append(("list_labels",))
+        return [GmailLabel(id=i, name=i.title(), type="system") for i in ("INBOX", "UNREAD", "IMPORTANT")]
+
+    def get_label(self, label_id):
+        self.calls.append(("get_label", label_id))
+        mine = self._count(label_id)
+        if label_id not in ("INBOX", "UNREAD", "IMPORTANT", "SENT"):
+            raise GmailNotFound("label")
+        return GmailLabel(id=label_id, name=label_id.title(), type="system", messages_total=len(mine), messages_unread=len([m for m in mine if m.is_unread]))
+
+    def list_threads(self, query, max_results, page_token=None):
+        self.calls.append(("list_threads", query, max_results, page_token))
+        hits = [parse_message(r) for r in self.raws if self._matches(r, query)]
+        seen, ordered = set(), []
+        for m in sorted(hits, key=lambda x: x.sort_key, reverse=True):
+            if m.thread_id not in seen:
+                seen.add(m.thread_id)
+                ordered.append(GmailThreadSummary(thread_id=m.thread_id, snippet=m.snippet))
+        offset = int(page_token) if page_token else 0
+        shown = ordered[offset: offset + max_results]
+        more = offset + len(shown) < len(ordered)
+        return GmailThreadList(query=query, threads=shown, next_page_token=str(offset + len(shown)) if more else None, estimated_total=len(ordered))
 
     def get_attachment(self, message_id, attachment_id, max_bytes):
         self.calls.append(("get_attachment", message_id, attachment_id))

@@ -57,6 +57,13 @@ _DISCONNECT = re.compile(rf"^(?:disconnect|unlink|sign out of|log out of) (?:my 
 _ALLOW = re.compile(r"^(?P<a>allow|let|stop|don't let|do not let|prevent) (?:jarvis )?(?:from )?(?:to )?(?:creating|create|updating|update|deleting|delete|reading|read|indexing|index) (?P<what>calendar events?|events?|attachments?|documents?|files?)$|^(?P<a2>allow|stop|prevent) jarvis (?:from )?(?P<verb>creating|updating|deleting|reading|indexing) (?P<what2>calendar events|events|attachments|documents)$")
 
 
+_GMAIL_CONNECT = re.compile(r"^(?:connect|link|set up|sign in to|authorize|reconnect) (?:my )?(?:gmail|google mail|email)(?: account)?$")
+_GMAIL_UNREAD = re.compile(r"^(?:how many (?:unread|new) (?:emails?|messages?|mail)(?: do i have)?|how many (?:emails?|messages?) (?:do i have )?(?:that are |which are )?unread"
+                           r"|(?:do i have|have i got|are there) (?:any )?(?:unread|new) (?:emails?|messages?|mail)|(?:check|what(?:'s| is)|show) (?:my )?unread(?: emails?| mail)?(?: count)?|unread (?:emails?|mail)(?: count)?)$")
+_GMAIL_SUMMARIZE = re.compile(r"^(?:summari[sz]e|read out|brief me on|tell me about) (?:them|(?:my |the )?unread (?:emails?|mail|messages?))$")
+_YES = re.compile(r"^(?:yes|yeah|yep|sure|ok|okay|please|yes please|go ahead|please do|do it)$")
+
+
 def _canonical(name: str) -> str:
     return _NAMES.get(name.strip().lower(), name.strip().lower())
 
@@ -74,6 +81,12 @@ class HubRouter(FollowUps):
         followed = self._follow_up(t)
         if followed is not None:
             return followed
+        if _GMAIL_CONNECT.match(t):
+            return self._gmail_connect()
+        if _GMAIL_UNREAD.match(t):
+            return self._gmail_unread()
+        if _GMAIL_SUMMARIZE.match(t) or (_YES.match(t) and self._fresh("unread") is not None):
+            return self._gmail_unread_summary()
         m = _CONNECTED.match(t)
         if m:
             return self._connected(_canonical(m.group("n")) if m.groupdict().get("n") else None)
@@ -148,6 +161,51 @@ class HubRouter(FollowUps):
         if re.fullmatch(r"(?:the |my |this |that )?project", q.strip()):
             return self._svc.active_project() or ""
         return q
+
+    # ---- Gmail: connect, unread count, unread summary ---------------------------------------------------------------------------
+    def _gmail_connect(self) -> str:
+        reg = self._hub.registry
+        if reg.adapter("gmail") is None:
+            return "Gmail isn't enabled in my settings."
+        status = reg.adapter("gmail").connection_status()
+        if status["status"] == "NOT_CONFIGURED":
+            return status["message"]
+        if status["connected"]:
+            return "Gmail is already connected, read-only."
+        reg.set_enabled("gmail", True)
+        reg.connect_async("gmail")
+        self._svc._audit_record("integration.gmail", "connect", ActionResult.SUCCESS, Confirmation.USER, "gmail", "")  # noqa: SLF001
+        return "Okay. I've opened Google sign-in in your browser. Sign in and allow read-only access to Gmail, then tell me to check Gmail."
+
+    def _gmail_unread(self) -> str:
+        r = self._hub.tools.call("gmail_unread_count", {})
+        if not r.success:
+            return self._fail(r)
+        total, important = int(r.data["unread_total"]), int(r.data["important_unread"])
+        self._last = Last("unread", [], "unread", None, self._svc.now())
+        if total == 0:
+            return "You have no unread emails."
+        text = f"There {'is' if total == 1 else 'are'} {total} unread email{'s' if total != 1 else ''}."
+        if important:
+            text += f" {important} {'is' if important == 1 else 'are'} marked important."
+        return text + " Would you like me to summarize them?"
+
+    def _gmail_unread_summary(self) -> str:
+        r = self._hub.tools.call("search_email", {"query": "in:inbox is:unread", "limit": 5})
+        if not r.success:
+            return self._fail(r)
+        items = r.data
+        if not items:
+            return "You have no unread emails."
+        self._last = Last("emails", list(items), "unread", None, self._svc.now())
+        lines = []
+        stmts = []
+        for i in items:
+            who = quoted(i["metadata"].get("sender") or "someone", 40)
+            lines.append(f"{who}: {quoted(i['title'], 60)}")
+            stmts.append(fact(f"Gmail has an unread email {quoted(i['title'], 60)}.", self._prov(i, f"email {quoted(i['title'], 40)}")))
+        more = " These are the newest five." if len(items) == 5 else ""
+        return self._record(f"Your latest unread emails are from " + "; ".join(lines) + "." + more, stmts, "unread emails")
 
     # ---- status / switches -------------------------------------------------------------------------------------------------
     def _connected(self, name: str | None) -> str:

@@ -23,8 +23,8 @@ class GmailError(Exception):
 
 class GmailNotConfigured(GmailError):
     user_message = (
-        "Gmail isn't set up yet. Add your Google OAuth client file and run python scripts/gmail_cli.py auth. "
-        "See docs/gmail-intelligence.md."
+        "Gmail OAuth credentials not configured. Put your Google OAuth client JSON in the secrets folder and connect Gmail from the dashboard "
+        "(or run python scripts/gmail_cli.py auth). See docs/integrations/GMAIL.md."
     )
 
 
@@ -156,6 +156,63 @@ class GmailSearchResult(BaseModel):
     @property
     def count(self) -> int:
         return len(self.messages)
+
+
+class GmailProfile(BaseModel):
+    """The connected mailbox. `email_address` is the account itself: it is shown redacted everywhere it leaves the local API (see `redact_address`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email_address: str
+    messages_total: int = 0
+    threads_total: int = 0
+
+
+class GmailLabel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    type: str = "user"  # system | user
+    messages_total: int | None = None
+    messages_unread: int | None = None
+    threads_unread: int | None = None
+
+
+class GmailThreadSummary(BaseModel):
+    """One row of a thread listing: the id and Gmail's own snippet. The messages are fetched only when the thread is opened."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    snippet: str = ""
+
+
+class GmailThreadList(BaseModel):
+    query: str = ""
+    threads: list[GmailThreadSummary] = Field(default_factory=list)
+    next_page_token: str | None = None
+    estimated_total: int = 0
+
+    @property
+    def count(self) -> int:
+        return len(self.threads)
+
+
+class UnreadCounts(BaseModel):
+    """Exact counts from the Gmail label counters (not an estimate from a search)."""
+
+    unread_total: int = 0
+    inbox_unread: int = 0
+    important_unread: int = 0
+
+
+def redact_address(email: str) -> str:
+    """"harsha282004@gmail.com" -> "h***@gmail.com": enough for the owner to recognise the account, useless to anyone else."""
+    if "@" not in email:
+        return "an unknown account"
+    local, _, domain = email.partition("@")
+    return f"{local[:1]}***@{domain}"
 
 
 class EmailClassification(BaseModel):

@@ -30,3 +30,7 @@ OAuth works — **not executable here** (needs your Google consent; the flow, re
 ## Limits
 
 Rule-based English extraction; ambiguous dates are asked about, never guessed. A message's HTML is reduced to text; large mailboxes are read in bounded pages (≤50 messages per sync run, continued next time via a page cursor). Only the inbox is synchronized.
+
+## OAuth connection, status and read-only API
+
+Credential discovery in `secrets/`, the connect flow, live status classes, unread counts, labels, threads, the dashboard card, voice commands and the `/integrations/gmail/*` API are documented in [integrations/GMAIL.md](integrations/GMAIL.md).

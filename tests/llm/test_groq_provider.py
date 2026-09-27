@@ -85,6 +85,25 @@ def test_generate_wrapper_and_json_mode():
     assert g.bodies()[1]["response_format"] == {"type": "json_object"}
 
 
+def test_json_mode_uses_its_own_smaller_token_budget():
+    """Root cause of intermittent real-world "I can't reach the language model": a small tokens-per-minute account
+    (measured: 8000 TPM on the deployed key) is exhausted by ordinary conversation because every turn makes one
+    json_mode agent-routing call in addition to the real answer. A structured decision needs a few dozen tokens, not
+    the full LLM_MAX_TOKENS budget meant for spoken answers -- json_mode must request json_max_tokens instead."""
+    g = Groq((200, completion('{"a": 1}')), (200, completion("a full spoken answer")))
+    p = g.provider(max_tokens=2048, json_max_tokens=800)
+    p.chat([Message(Role.USER, "route this")], json_mode=True)
+    p.chat([Message(Role.USER, "answer this")], json_mode=False)
+    bodies = g.bodies()
+    assert bodies[0]["max_completion_tokens"] == 800   # the routing call: capped lower than a real answer
+    assert bodies[1]["max_completion_tokens"] == 2048  # the real answer: unaffected
+
+
+def test_json_max_tokens_defaults_to_a_small_value_independent_of_max_tokens():
+    p = GroqProvider(FAKE_KEY, max_tokens=2048)
+    assert p._json_max_tokens == 800 and p._json_max_tokens < p._max_tokens
+
+
 def test_json_mode_falls_back_when_the_model_rejects_response_format():
     g = Groq((400, {"error": {"message": "response_format json_object is not supported with this model"}}), (200, completion('{"a": 1}')))
     assert g.provider().chat([Message(Role.USER, "x")], json_mode=True) == '{"a": 1}'
@@ -118,6 +137,26 @@ def test_rate_limit_is_retried_with_retry_after_then_succeeds():
     slept = []
     g = Groq((429, {"error": {"message": "slow down"}}, {"retry-after": "2"}), (200, completion("done")))
     assert g.provider(sleep=slept.append).chat([Message(Role.USER, "x")]) == "done" and slept == [2.0] and len(g.requests) == 2
+
+
+def test_rate_limit_honors_a_longer_retry_after_up_to_the_new_higher_cap():
+    """Root cause of intermittent real-world "I can't reach the language model": on a small tokens-per-minute
+    account, a 429 for the TOKEN budget cannot succeed sooner than the minute actually resets, and Groq's own
+    retry-after reflects that real wait -- often much longer than the old 5 s cap. Retrying too soon just fails again
+    and burns the bounded retry count for nothing. The cap must now honor a realistic wait (up to 20 s)."""
+    from backend.core.llm import groq_provider as groq_module
+
+    slept = []
+    g = Groq((429, {"error": {"message": "slow down"}}, {"retry-after": "18"}), (200, completion("done")))
+    assert g.provider(sleep=slept.append).chat([Message(Role.USER, "x")]) == "done" and slept == [18.0]
+    assert groq_module._MAX_RETRY_AFTER >= 20.0
+
+
+def test_rate_limit_retry_after_is_still_capped_not_unbounded():
+    slept = []
+    g = Groq((429, {"error": {"message": "slow down"}}, {"retry-after": "600"}), (200, completion("done")))
+    g.provider(sleep=slept.append).chat([Message(Role.USER, "x")])
+    assert slept == [20.0]  # never waits longer than the cap, however large the header claims
 
 
 def test_rate_limit_persisting_raises_after_bounded_retries():
@@ -212,8 +251,9 @@ def test_health_check_states_for_the_monitor():
 def test_factory_and_defaults():
     s = Settings()
     assert (s.LLM_PROVIDER, s.LLM_MODEL, s.GROQ_BASE_URL) == ("groq", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1")
-    p = build_llm(Settings(GROQ_API_KEY=FAKE_KEY, LLM_MODEL="llama-3.3-70b-versatile", LLM_MAX_TOKENS=99, LLM_TIMEOUT_SECONDS=7, LLM_MAX_RETRIES=1))
+    p = build_llm(Settings(GROQ_API_KEY=FAKE_KEY, LLM_MODEL="llama-3.3-70b-versatile", LLM_MAX_TOKENS=99, LLM_TIMEOUT_SECONDS=7, LLM_MAX_RETRIES=1, LLM_JSON_MAX_TOKENS=123))
     assert isinstance(p, GroqProvider) and p.model == "llama-3.3-70b-versatile" and p._max_tokens == 99 and p._timeout == 7 and p._max_retries == 1
+    assert p._json_max_tokens == 123
     from backend.core.llm.ollama_provider import OllamaProvider
 
     assert isinstance(build_llm(Settings(LLM_PROVIDER="ollama", LLM_MODEL="llama3")), OllamaProvider)          # switching providers is one setting

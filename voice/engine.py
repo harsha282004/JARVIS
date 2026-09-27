@@ -31,7 +31,8 @@ import numpy as np
 
 from agent.tasks.notifications import AnnouncementQueue
 from backend.core.conversation.engine import ConversationEngine
-from backend.core.llm.base import LLMProviderError
+from backend.core.llm.base import GENERIC_LLM_ERROR, LLMProviderError, describe_llm_error
+from backend.core.llm.base import LLM_ERROR_MESSAGES as LLM_ERROR_MESSAGES_
 from backend.core.logging import get_logger
 from backend.core.metrics import metrics
 from voice.audio import AudioInput, AudioOutput
@@ -49,7 +50,12 @@ from voice.wakeword.base import WakeWordProvider
 logger = get_logger(__name__)
 
 STT_UNAVAILABLE = "I can't process speech right now. You can still use the dashboard."
-LLM_UNAVAILABLE = "I can't reach my language model right now. I can still help with reminders, your calendar and your email."
+# Sourced from backend.core.llm.base so voice and the dashboard chat endpoint (backend/core/dashboard_chat.py) report
+# the exact same honest, per-kind text for an LLM failure -- never the same flat message for a rate limit, a timeout
+# and a real outage, and never used for a Gmail/tool failure (which never raises LLMProviderError).
+LLM_UNAVAILABLE = GENERIC_LLM_ERROR
+LLM_ERROR_MESSAGES = LLM_ERROR_MESSAGES_
+_llm_error_message = describe_llm_error
 MIC_LOST = "I lost the microphone. I'll keep trying to reconnect."
 DIDNT_CATCH = "Sorry, I didn't catch that."
 LOW_CONFIDENCE_CONFIRM = "I wasn't sure I heard that. Please say yes or no again."
@@ -204,6 +210,7 @@ class VoiceEngine:
     def _acquire_mic(self, stack: ExitStack, should_stop: Callable[[], bool] | None) -> bool:
         """Open the microphone, retrying while it is missing (unplugged, in use, permission). False if asked to stop meanwhile."""
         announced = False
+        attempt = 0
         while True:
             try:
                 stack.enter_context(self._audio_input)
@@ -217,7 +224,10 @@ class VoiceEngine:
                     announced = True
                 if should_stop is not None and should_stop():
                     return False
-                self._sleep(self._mic_retry)
+                attempt += 1
+                # Bounded exponential backoff (2 s, 4 s, 8 s ... capped at 30 s): Windows may not have its audio subsystem ready right after logon, and a
+                # microphone that stays away must not be polled in a tight loop. The moment it appears the next attempt succeeds and the counter is gone.
+                self._sleep(min(self._mic_retry * (2 ** min(attempt - 1, 5)), 30.0))
                 continue
             if announced:
                 logger.info("MICROPHONE_RECONNECTED")
@@ -387,9 +397,10 @@ class VoiceEngine:
             with metrics.timer("conversation_ms"):  # the agent, its tools and any LLM calls for this turn
                 response = self._conversation.respond(text)
         except LLMProviderError as exc:
-            logger.error("LLM request failed: %s", exc)
-            self.status.update(last_error="Language model unavailable")
-            self._log.event("llm_failed", session_id=self._session_id, state="thinking", transcription=text, result="LLMProviderError")
+            kind = getattr(exc, "kind", "unavailable")
+            logger.error("LLM request failed (kind=%s): %s", kind, exc)
+            self.status.update(last_error=f"Language model unavailable ({kind})")
+            self._log.event("llm_failed", session_id=self._session_id, state="thinking", transcription=text, result=f"LLMProviderError:{kind}")
             self._set_state(VoiceState.WAITING)
             raise
         elapsed = (time.perf_counter() - started) * 1000
@@ -563,6 +574,9 @@ class VoiceEngine:
         try:
             if not self._acquire_mic(stack, should_stop):
                 return None
+            warm_up = getattr(self._audio_output, "warm_up", None)
+            if callable(warm_up):
+                warm_up()  # pays the output device's cold-start cost once, silently, well before the wake ack is spoken
             if not self._wait_for_wake(stack, should_stop):
                 self._set_state(VoiceState.WAITING)
                 return None
@@ -685,6 +699,17 @@ class VoiceEngine:
                 continue
             clean = normalize(text)
             if not clean.text:
+                # Root cause of "Hey JARVIS"/"JARVIS" getting no response while a conversation is open: the wake phrase alone
+                # normalizes (normalize.py strips a leading wake word) to an empty string, so it used to fall through to a
+                # silent "miss" here -- no "Yes?", no error, just re-listening -- exactly the symptom of LISTENING_STARTED/STT
+                # activity with no reply. The user re-said the wake phrase (checking JARVIS is still listening, or simply out
+                # of habit); that must re-acknowledge, once, not be discarded as noise.
+                if confirm_phrase(text)[0]:
+                    self._interrupt.clear()
+                    self._speak(self._activation_reply, kind="prompt", monitor=False)
+                    self._idle_audio = 0.0
+                    utterance, status, _ = self._capture(timeout, should_stop)
+                    continue
                 utterance, status, _ = self._capture(timeout, should_stop)
                 misses += 1
                 if misses > 2:
@@ -703,8 +728,8 @@ class VoiceEngine:
                 turn_started = time.perf_counter()
                 try:
                     response = self._think(clean.text)
-                except LLMProviderError:
-                    self._speak(LLM_UNAVAILABLE, kind="prompt", monitor=False)
+                except LLMProviderError as exc:
+                    self._speak(_llm_error_message(exc), kind="prompt", monitor=False)
                     raise
                 self._last_response = response
                 self.status.update(last_response=response, pending_action=self._conversation.awaiting_answer()

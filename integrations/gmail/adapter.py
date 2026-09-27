@@ -11,6 +11,7 @@ Email text is untrusted data: it is pattern-matched, sanitized, size-bounded and
 """
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -19,10 +20,13 @@ from pathlib import Path
 from agent.intelligence.extraction import CommitmentKind, TextExtractor
 from backend.core.security.trust import sanitize_external
 from integrations.gmail.analysis import EmailAnalysis, analyze_email
-from integrations.gmail.models import GmailMessage
+from integrations.gmail.models import GmailLabel, GmailMessage, GmailProfile, GmailThreadList, UnreadCounts, redact_address
+from integrations.gmail.status import GmailConnection, build_status, classify_exception
 from integrations.gmail.service import GmailService
 from integrations.hub.models import ErrorKind, HubError, ItemKind, NormalizedItem, Permission, utcnow
 from integrations.hub.registry import IntegrationAdapter, SyncBatch
+
+logger = logging.getLogger(__name__)
 
 MAX_PAGES = 5
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
@@ -42,6 +46,8 @@ def normalize_message(message: GmailMessage, analysis: EmailAnalysis, retrieved_
         {
             "thread_id": message.thread_id, "sender": sanitize_external(sender, 60), "topic": analysis.topic.value, "importance": analysis.importance.name,
             "importance_reasons": analysis.reasons[:5], "category": analysis.category.value, "unread": message.is_unread,
+            "important": "IMPORTANT" in message.labels, "has_attachment": message.has_attachments, "labels": [sanitize_external(x, 40) for x in message.labels[:20]],
+            "recipients": [(sanitize_external(r.name, 80) if r.name and "@" not in r.name else "a recipient") for r in message.recipients[:10]],
             "attachments": [{"filename": sanitize_external(a.filename, 120), "mime": a.mime_type, "size": a.size, "attachment_id": a.attachment_id} for a in message.attachments[:20]],
             "injection_suspected": analysis.flagged, "location": analysis.location,
         },
@@ -81,6 +87,7 @@ class GmailAdapter(IntegrationAdapter):
         self._initial_days = initial_days
         self._attachments_dir = attachments_dir
         self._max_attachment = max_attachment_bytes
+        self._last_ok: datetime | None = None
 
     def _extractor(self) -> TextExtractor:
         return TextExtractor(self._zone, self._clock)
@@ -97,11 +104,45 @@ class GmailAdapter(IntegrationAdapter):
         self._auth.authorize()
 
     def health_check(self) -> str:
-        self._svc.search("in:inbox", 1)
-        return "Gmail reachable"
+        profile = self._svc.profile()  # the cheapest real proof that the stored authorization works with the read-only scope
+        self._last_ok = self._clock()
+        return f"Gmail reachable (read-only, {redact_address(profile.email_address)})"
 
     def disconnect(self) -> None:
         self._auth.forget()
+        self._last_ok = None
+
+    # ---- read-only account/mailbox operations (each is one small Gmail call; nothing is stored) ------------------------------
+    def profile(self) -> GmailProfile:
+        return self._svc.profile()
+
+    def labels(self) -> list[GmailLabel]:
+        return self._svc.labels()
+
+    def unread_counts(self) -> UnreadCounts:
+        return self._svc.unread_counts()
+
+    def threads(self, query: str, limit: int, page_token: str | None = None) -> GmailThreadList:
+        return self._svc.list_threads(query, limit, page_token)
+
+    def connection_status(self) -> dict:
+        """The truthful status from a real `users/me/profile` call (see integrations/gmail/status.py). Never raises, never includes a token."""
+        client = self._auth.has_client_config
+        authorized = self._auth.is_ready()
+        now = self._clock()
+        if not client and not authorized:
+            return build_status(GmailConnection.NOT_CONFIGURED, checked_at=now)
+        if not authorized:
+            return build_status(GmailConnection.AUTH_REQUIRED, checked_at=now, client_configured=True)
+        try:
+            profile = self._svc.profile()
+        except Exception as exc:  # noqa: BLE001 - classified, never raised into the UI
+            status = classify_exception(exc)
+            logger.warning("Gmail connection check: %s", status.value)
+            return build_status(status, checked_at=now, last_ok=self._last_ok, client_configured=client, authorized=authorized)
+        self._last_ok = now
+        return build_status(GmailConnection.CONNECTED, account=profile.email_address, messages_total=profile.messages_total, checked_at=now, last_ok=now,
+                            client_configured=client, authorized=True)
 
     def revoke(self) -> bool:
         return self._auth.revoke_remote()
@@ -113,6 +154,14 @@ class GmailAdapter(IntegrationAdapter):
     def search(self, query: str, limit: int) -> list[NormalizedItem]:
         result = self._svc.search(query, limit)
         return [self._normalize(m, derived=False)[0] for m in result.messages]
+
+    def search_page(self, query: str, limit: int, page_token: str | None = None) -> tuple[list[NormalizedItem], str | None]:
+        """One bounded page of normalized results plus the token for the next page (None at the end)."""
+        result = self._svc.search(query, limit, page_token)
+        return [self._normalize(m, derived=False)[0] for m in result.messages], result.next_page_token
+
+    def thread_items(self, thread_id: str) -> list[NormalizedItem]:
+        return [self._normalize(m, derived=False)[0] for m in self._svc.get_thread(thread_id).messages]
 
     def fetch(self, source_id: str) -> NormalizedItem:
         return self._normalize(self._svc.get_message(source_id), derived=True)[0]

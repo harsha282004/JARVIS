@@ -89,17 +89,26 @@ class RuntimeServices:
     tray_holder: dict = field(default_factory=dict)  # "tray" -> TrayController once it exists (notifications are delivered through it)
     periodic: list[PeriodicTask] = field(default_factory=list)
     manager: object | None = None
+    voice_switch: object | None = None  # voice.switch.VoiceSwitch: the one ON/OFF control the tray, dashboard and start-up share
     paused_by_privacy: bool = False
     locked_by_power: bool = False
 
     # ---- wiring that needs the RuntimeManager -------------------------------------------------------------------
 
     def start_paused(self) -> bool:
-        """The saved privacy mode survives restarts: PRIVATE/PAUSED means the microphone is never opened at startup."""
+        """The saved privacy mode and the saved voice ON/OFF switch survive restarts: PRIVATE/PAUSED or a saved OFF means the microphone is never opened at startup."""
+        if self.voice_switch is not None:
+            return self.voice_switch.start_paused()
         return not self.privacy.capabilities.microphone
 
     def attach_manager(self, manager) -> None:
         self.manager = manager
+        if self.voice is not None:
+            from voice.switch import VoiceSwitch
+
+            self.voice_switch = VoiceSwitch(self.voice.settings, mic_allowed=lambda: self.privacy.capabilities.microphone, interrupt=self.voice.interrupt)
+            self.voice_switch.attach_manager(manager)
+            self.voice.switch = self.voice_switch
         self.privacy.add_listener(self._on_privacy_change)
         self.supervisor.add(SupervisedService(
             "voice_runtime",
@@ -118,9 +127,15 @@ class RuntimeServices:
         if not self.privacy.capabilities.microphone:
             if manager.state.value == "running" and manager.pause():
                 self.paused_by_privacy = True
-        elif self.paused_by_privacy:
-            self.paused_by_privacy = False
-            manager.resume()
+        else:
+            switch = getattr(self, "voice_switch", None)
+            deferred = switch is not None and switch.deferred_resume
+            if self.paused_by_privacy or deferred:
+                self.paused_by_privacy = False
+                if switch is not None:
+                    switch.deferred_resume = False
+                if (switch is None or switch.enabled) and manager.state.value == "paused":   # a voice the user switched OFF stays off when privacy allows the microphone again
+                    manager.resume()
 
     def on_power_change(self, old: PowerState, new: PowerState) -> None:
         self.bus.publish(SystemEvent.POWER_STATE_CHANGED, old=old.value, new=new.value)
@@ -403,6 +418,13 @@ def build_tray_actions(services: RuntimeServices, manager) -> TrayActions:
         settings = services.settings
         webbrowser.open(f"http://{settings.API_HOST}:{settings.API_PORT}/dashboard")
 
+    switch = services.voice_switch
+
+    def open_voice_settings() -> None:
+        import webbrowser
+
+        webbrowser.open(f"http://{services.settings.API_HOST}:{services.settings.API_PORT}/dashboard#voice-panel")
+
     def voice_toggle(name: str):
         return (lambda: voice.toggle(name)) if voice is not None else None
 
@@ -410,11 +432,13 @@ def build_tray_actions(services: RuntimeServices, manager) -> TrayActions:
         return (lambda: bool(getattr(voice.settings.current, name))) if voice is not None else None
 
     return TrayActions(
+        toggle_voice_power=switch.toggle if switch is not None else None, voice_power_on=(lambda: switch.enabled) if switch is not None else None,
         stop_speaking=manager.interrupt_speech,
         toggle_mute=voice_toggle("voice_muted"), is_muted=voice_reader("voice_muted"),
         toggle_voice_notifications=voice_toggle("voice_notifications"), voice_notifications_on=voice_reader("voice_notifications"),
         toggle_dnd=voice_toggle("dnd_enabled"), dnd_on=(lambda: voice.policy.dnd_active()) if voice is not None else None,
         open_dashboard=open_dashboard if services.settings.JARVIS_API_ENABLED else None,
+        open_voice_settings=open_voice_settings if services.settings.JARVIS_API_ENABLED else None,
         open_browser=(lambda: services.browser.open_browser()) if services.browser is not None else None,
         close_browser=(lambda: services.browser.close_browser()) if services.browser is not None else None,
         stop_browser_action=(lambda: services.browser.stop_action()) if services.browser is not None else None,

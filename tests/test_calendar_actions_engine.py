@@ -160,9 +160,12 @@ def test_invalid_calendar_output_falls_back_after_one_retry(stack, bad):
 
 
 def test_calendar_action_is_dropped_when_calendar_is_disabled():
+    """When Calendar is disabled/not connected, the model can still correctly recognize a calendar request; the reply
+    must say so honestly (Phase 3: an unavailable-integration reason) instead of the generic ACTION_RESPONSE filler."""
     llm = ScriptedLLM(act("calendar_events", scope="today"))
     engine = ConversationEngine(llm, 20, 120, agent=AgentBrain(llm, tools=[], max_plan_steps=8), permissions=PermissionManager())
-    assert engine.respond("What's on my calendar?") == ACTION_RESPONSE and engine.last_decision.calendar_action is None
+    assert engine.respond("What's on my calendar?") == "Google Calendar isn't connected right now, so I can't do that."
+    assert engine.last_decision.calendar_action is None
 
 
 def test_prompt_mentions_calendar_only_when_the_tools_exist(stack):

@@ -67,19 +67,24 @@ class GmailSearchArgs(_Query):
 
 
 class _Target(_Query):
-    """Identifies one email by words. `latest` picks the newest match instead of asking which one."""
+    """Identifies one email by words. `latest` picks the newest match instead of asking which one; `same_email`
+    (Phase 10 multi-turn) refers back to the email already discussed earlier in this conversation instead of
+    describing a new one -- for "What was it about?" / "Who sent it?" / "Was there an attachment?" style follow-ups.
+    Only an opaque id of that earlier message is ever kept (see GmailToolContext.remember); its content never
+    re-enters the conversation history or this model's context because of this field."""
 
     latest: bool = False
+    same_email: bool = False
 
-    @field_validator("latest", mode="before")
+    @field_validator("latest", "same_email", mode="before")
     @classmethod
     def _latest(cls, value: Any) -> Any:
         return False if value is None else value
 
     @model_validator(mode="after")
     def _needs_something(self) -> "_Target":
-        if not self.query and not self.latest:
-            raise ValueError("describe the email or ask for the latest one")
+        if not self.query and not self.latest and not self.same_email:
+            raise ValueError("describe the email, ask for the latest one, or refer to the one just discussed")
         return self
 
 

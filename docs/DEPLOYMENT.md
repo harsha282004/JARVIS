@@ -11,8 +11,8 @@ Ollama with the model named in `LLM_MODEL` (only for questions the intelligence 
 ## Install
 
 ```powershell
-.\scripts\windows\install_jarvis.ps1                    # Startup-folder shortcut (default)
-.\scripts\windows\install_jarvis.ps1 -UseScheduledTask   # per-user logon task that also restarts JARVIS if the whole process dies
+.\scripts\windows\install_jarvis.ps1                    # per-user Task Scheduler task at logon (default; restarts JARVIS if the process fails, never starts a second copy)
+.\scripts\windows\install_jarvis.ps1 -StartupMethod run       # HKCU Run entry instead (or: shortcut = Startup folder)
 .\scripts\windows\install_jarvis.ps1 -NoStartup -SkipMigrations
 ```
 It creates `.venv`, installs `requirements.txt`, copies `.env.example` to `.env` **only if `.env` does not exist**, creates `logs/` and `.jarvis/`, runs

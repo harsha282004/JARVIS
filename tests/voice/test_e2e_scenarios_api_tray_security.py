@@ -213,6 +213,37 @@ def test_interrupt_and_activate_endpoints(api):
     assert client.post("/voice/activate", headers=hdr(ctx)).json() == {"activated": True}
 
 
+def test_voice_enable_disable_endpoints_use_the_shared_switch(api):
+    client, ctx, voice = api
+    from desktop.runtime.manager import RuntimeManager
+    from tests.test_runtime_manager import FakeEngine
+    from voice.switch import VoiceSwitch
+
+    engine = FakeEngine()
+    switch = VoiceSwitch(voice.settings)
+    manager = RuntimeManager(lambda: engine, stop_timeout=3, start_paused=switch.start_paused)
+    switch.attach_manager(manager)
+    voice.switch = switch
+    ctx.manager = manager
+    manager.start()
+
+    body = client.post("/voice/disable", headers=hdr(ctx)).json()
+    assert body["enabled"] is False and body["mode"] == "OFF"
+    body = client.get("/voice", headers=hdr(ctx)).json()
+    assert body["enabled"] is False
+    body = client.post("/voice/enable", headers=hdr(ctx)).json()
+    assert body["enabled"] is True and body["mode"] == "SLEEPING"
+    # idempotent: calling the same endpoint twice changes nothing further
+    body2 = client.post("/voice/enable", headers=hdr(ctx)).json()
+    assert body2["enabled"] is True
+    manager.shutdown()
+
+
+def test_settings_endpoint_refuses_voice_enabled_it_has_its_own_endpoints(api):
+    client, ctx, voice = api
+    assert client.post("/voice/settings", json={"voice_enabled": False}, headers=hdr(ctx)).status_code == 400
+
+
 def test_paused_runtime_reports_the_microphone_as_closed(api):
     client, ctx, voice = api
     voice.status.update(mic="MICROPHONE_CONNECTED")
@@ -225,6 +256,42 @@ def test_voice_log_endpoint_returns_redacted_events_only(api):
     voice.log.event("turn", session_id="s1", state="thinking", transcription="my token is ghp_" + "a" * 36, result="ok")
     events = client.get("/voice/log", headers=hdr(ctx)).json()["events"]
     assert events and "ghp_" not in json.dumps(events)
+
+
+# ---- dashboard chat --------------------------------------------------------------------------------------------------------------------------
+
+def test_chat_endpoint_uses_the_real_dashboard_chat_and_needs_auth(api):
+    client, ctx, _ = api
+    from backend.core.dashboard_chat import DashboardChat
+
+    class FakeConv:
+        last_decision = None
+
+        def respond(self, text):
+            return f"echo: {text}"
+
+        @property
+        def last_action_name(self):
+            return None
+
+        def reset(self):
+            pass
+
+    ctx.chat = DashboardChat(FakeConv())
+    assert client.post("/chat", json={"text": "hi"}).status_code == 401  # no token
+    body = client.post("/chat", json={"text": "hi"}, headers=hdr(ctx)).json()
+    assert body["ok"] is True and body["reply"] == "echo: hi"
+    history = client.get("/chat/history", headers=hdr(ctx)).json()["messages"]
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert client.post("/chat/reset", headers=hdr(ctx)).json() == {"reset": True}
+    assert client.get("/chat/history", headers=hdr(ctx)).json()["messages"] == []
+
+
+def test_chat_endpoint_is_honest_when_not_running(api):
+    client, ctx, _ = api
+    ctx.chat = None
+    assert client.post("/chat", json={"text": "hi"}, headers=hdr(ctx)).status_code == 503
+    assert client.get("/chat/history", headers=hdr(ctx)).status_code == 503
 
 
 def test_dashboard_page_has_the_voice_panel():
@@ -258,6 +325,20 @@ def test_tray_voice_menu_reflects_real_state_and_toggles_settings(tmp_path):
     tray._stop_speaking()
     tray._dashboard()
     assert calls == ["stop", "dash"]
+
+
+def test_tray_shows_jarvis_on_off_and_toggles_it(tmp_path):
+    store = VoiceSettingsStore(tmp_path / "v.json")
+    on = {"v": True}
+    actions = TrayActions(toggle_voice_power=lambda: on.__setitem__("v", not on["v"]), voice_power_on=lambda: on["v"])
+    tray = TrayController(FakeManager(RuntimeState.RUNNING), lambda: None, actions=actions)
+    menu = tray._build_menu()
+    power_item = next(i for i in menu.items if i is not None and isinstance(i.text, str) and "click to turn" in i.text)
+    assert "ON" in power_item.text
+    tray._toggle_voice_power()
+    assert on["v"] is False and "OFF" in power_item.text
+    tray._toggle_voice_power()
+    assert on["v"] is True
 
 
 def test_tray_voice_items_are_greyed_out_when_nothing_is_wired():

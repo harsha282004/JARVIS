@@ -126,6 +126,127 @@ def test_audio_output_volume_scales_samples_and_stop_is_safe(monkeypatch):
     assert played["stopped"] is True
 
 
+def test_audio_output_volume_above_one_amplifies_a_quiet_clip():
+    """Root cause of the reported "Yes?" volume complaint being investigated: `volume` used to be attenuation-only
+    (>= 1.0 was a no-op), so a config value above 1.0 could never make anything louder. A quiet (non-full-scale) clip
+    at volume=1.5 must come out louder, not unchanged."""
+    import voice.audio as audio
+
+    out = audio.AudioOutput.__new__(audio.AudioOutput)
+    out.volume = 1.5
+    quiet = np.full(8, 0.2, dtype=np.float32)
+    scaled = out._scaled(quiet)
+    assert np.all(scaled > quiet)                              # louder than the original...
+    assert np.max(np.abs(scaled)) < 1.0                         # ...but nowhere near clipping for a clip this quiet
+
+
+def test_audio_output_gain_soft_clips_instead_of_distorting_or_being_capped_silently():
+    """A gain that would drive an already-loud (near full-scale) clip over 0 dBFS must be rounded off (soft clip),
+    never a hard, harsh clip and never silently ignored (the old `>= 0.999: return samples` bug)."""
+    import voice.audio as audio
+
+    out = audio.AudioOutput.__new__(audio.AudioOutput)
+    out.volume = audio._MAX_GAIN
+    loud = np.array([1.0, -1.0, 0.95, -0.95], dtype=np.float32)
+    scaled = out._scaled(loud)
+    assert np.all(np.abs(scaled) <= 1.0 + 1e-6)                 # never exceeds full scale
+    assert np.max(np.abs(scaled)) > 0.9                         # still clearly amplified, not squashed to nothing
+    assert not np.array_equal(scaled, loud)                     # the gain was actually applied (not a silent no-op)
+
+
+def test_audio_output_gain_is_capped_at_max_gain_even_if_a_larger_volume_is_set():
+    import voice.audio as audio
+
+    out = audio.AudioOutput.__new__(audio.AudioOutput)
+    out.volume = 99.0  # a caller bypassing the settings validator must still be safe
+    within_cap = out._scaled(np.full(4, 0.1, dtype=np.float32))
+    out.volume = audio._MAX_GAIN
+    at_cap = out._scaled(np.full(4, 0.1, dtype=np.float32))
+    assert np.allclose(within_cap, at_cap)                      # anything above _MAX_GAIN behaves exactly like the cap
+
+
+def test_audio_output_int16_gain_path_also_amplifies_and_soft_clips():
+    import voice.audio as audio
+
+    out = audio.AudioOutput.__new__(audio.AudioOutput)
+    out.volume = 1.8
+    quiet = np.full(4, 5000, dtype=np.int16)
+    scaled = out._scaled(quiet)
+    assert scaled.dtype == np.int16
+    assert np.all(scaled > quiet)
+    loud = np.full(4, 32000, dtype=np.int16)
+    scaled_loud = out._scaled(loud)
+    assert np.all(np.abs(scaled_loud.astype(np.int32)) <= 32767)
+
+
+def test_warm_up_plays_a_brief_near_silent_clip_once_and_is_idempotent():
+    """Root cause of the reported "Yes?" volume complaint: Piper already peaks its output near 0 dBFS (measured), so
+    the fix is not a gain -- it is that `sd.play()` opens a fresh output stream on first use, and the OS's cold-start
+    latency on that first call can swallow much of a 150 ms utterance while a multi-second reply barely notices. This
+    proves warm_up() pays that cost once, silently, and never touches the device again after it succeeds."""
+    import voice.audio as audio
+
+    class FakeBackend:
+        def __init__(self):
+            self.play_calls = []
+
+        def play(self, data, samplerate, device):
+            self.play_calls.append((len(data), samplerate, device))
+
+        def wait(self):
+            pass
+
+    backend = FakeBackend()
+    out = audio.AudioOutput(backend=backend)
+    out.warm_up()
+    out.warm_up()
+    out.warm_up()
+    assert len(backend.play_calls) == 1                          # idempotent: only the first call actually plays anything
+    length, rate, _device = backend.play_calls[0]
+    assert 0 < length / rate <= 0.3                               # brief (a few hundred ms at most), never a real delay
+
+
+def test_warm_up_is_near_silent_and_never_the_configured_volume():
+    """The warm-up clip must not be audible on its own and must not go through the configured (possibly amplified)
+    gain -- it exists to prime the device, not to be heard."""
+    import voice.audio as audio
+
+    played = {}
+
+    class FakeBackend:
+        def play(self, data, samplerate, device):
+            played["data"] = data
+
+        def wait(self):
+            pass
+
+    out = audio.AudioOutput(volume=audio._MAX_GAIN, backend=FakeBackend())
+    out.warm_up()
+    assert np.max(np.abs(played["data"])) < 0.01                 # near-silent regardless of the configured gain
+
+
+def test_warm_up_failure_is_swallowed_and_retried_on_a_later_call():
+    import voice.audio as audio
+
+    class FlakyBackend:
+        def __init__(self):
+            self.calls = 0
+
+        def play(self, data, samplerate, device):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("device busy")
+
+        def wait(self):
+            pass
+
+    backend = FlakyBackend()
+    out = audio.AudioOutput(backend=backend)
+    out.warm_up()  # fails, swallowed
+    out.warm_up()  # succeeds
+    assert backend.calls == 2
+
+
 # ---- health ---------------------------------------------------------------------------------------------------------------------------
 
 def test_health_checks_are_refined_by_what_the_engine_observed():
@@ -220,7 +341,7 @@ def test_new_voice_settings_have_safe_defaults_and_validation():
 
     s = Settings()
     assert s.VOICE_USE_VAD is True and s.VOICE_SILENCE_SECONDS == 1.0 and s.VOICE_DND_ALLOW_CRITICAL is True
-    for bad in ({"VOICE_TTS_SPEED": 9}, {"VOICE_SILENCE_SECONDS": 0}, {"VOICE_TTS_VOLUME": 2}, {"VOICE_CONVERSATION_TIMEOUT_SECONDS": 1}):
+    for bad in ({"VOICE_TTS_SPEED": 9}, {"VOICE_SILENCE_SECONDS": 0}, {"VOICE_TTS_VOLUME": 3}, {"VOICE_CONVERSATION_TIMEOUT_SECONDS": 1}):
         with pytest.raises(ValidationError):
             Settings(**bad)
 

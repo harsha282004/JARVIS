@@ -63,3 +63,7 @@ Gmail and Calendar continue to reach it through the `SnapshotCollector` (unchang
 ## Not covered
 
 See `PHASE_18_IMPLEMENTATION.md` §Limitations.
+
+## Gmail hub tools (read-only)
+
+`gmail_status`, `gmail_unread_count`, `gmail_labels`, `gmail_list_messages`, `gmail_list_threads` and `gmail_get_thread` join `search_email` / `read_email`; all pass the registry gate (enabled, connected, permission). See [integrations/GMAIL.md](integrations/GMAIL.md).

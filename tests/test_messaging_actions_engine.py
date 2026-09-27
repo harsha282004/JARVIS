@@ -165,9 +165,13 @@ def test_invalid_messaging_output_falls_back_after_one_retry(stack, bad):
 
 
 def test_messaging_action_is_dropped_when_messaging_is_disabled():
+    """When messaging is disabled/not connected, the model can still correctly recognize a messaging request; the
+    reply must say so honestly (Phase 3: an unavailable-integration reason) instead of the generic ACTION_RESPONSE
+    filler."""
     llm = ScriptedLLM(act("message_list"))
     engine = ConversationEngine(llm, 20, 120, agent=AgentBrain(llm, tools=[], max_plan_steps=8), permissions=PermissionManager())
-    assert engine.respond("Check my messages") == ACTION_RESPONSE and engine.last_decision.message_action is None
+    assert engine.respond("Check my messages") == "Your messaging account isn't connected right now, so I can't do that."
+    assert engine.last_decision.message_action is None
 
 
 def test_prompt_mentions_messaging_only_when_the_tools_exist(stack):

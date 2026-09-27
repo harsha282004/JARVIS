@@ -6,6 +6,7 @@ setting is missing, startup fails with a clear error instead of guessing.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -13,9 +14,14 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# The project root (the folder that holds .env, models/, logs/ and .jarvis/), resolved from THIS file and never from the current directory, so a launch by Windows
+# (a Run entry or a Task Scheduler action starts in System32 or the user profile) finds the same configuration as a launch from the project folder.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -48,6 +54,10 @@ class Settings(BaseSettings):
     GROQ_REASONING_EFFORT: str = "low"                 # gpt-oss models only: low keeps a spoken assistant fast
     LLM_TEMPERATURE: float = Field(default=0.3, ge=0, le=2)
     LLM_MAX_TOKENS: int = Field(default=2048, ge=16, le=32768)
+    # A structured (json_mode) decision reply is a few dozen tokens; capping it well below LLM_MAX_TOKENS measurably
+    # reduces how fast an account on a small tokens-per-minute tier gets rate-limited by ordinary conversation, since
+    # every turn makes exactly one such call (agent routing) in addition to the real spoken answer.
+    LLM_JSON_MAX_TOKENS: int = Field(default=800, ge=64, le=4096)
     LLM_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=300)
     LLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
     # Local alternative provider (LLM_PROVIDER=ollama); nothing else requires it.
@@ -106,7 +116,7 @@ class Settings(BaseSettings):
     WAKE_STT_CONFIRM: bool = True
     VOICE_POST_TTS_WAKE_BLOCK_SECONDS: float = Field(default=1.0, ge=0.0, le=5.0)  # JARVIS's own voice cannot wake it
     VOICE_TTS_SPEED: float = Field(default=1.0, ge=0.5, le=2.0)
-    VOICE_TTS_VOLUME: float = Field(default=1.0, ge=0.0, le=1.0)
+    VOICE_TTS_VOLUME: float = Field(default=1.0, ge=0.0, le=2.0)  # above 1.0 amplifies with soft clipping (voice.audio); a real, bounded gain
     # Spoken answers longer than this are shortened for the ear; the full text stays on the dashboard.
     VOICE_SPOKEN_MAX_CHARS: int = Field(default=320, ge=80, le=2000)
     # Whether a critical alert may be spoken during Do Not Disturb.
@@ -219,6 +229,7 @@ class Settings(BaseSettings):
     GMAIL_CLIENT_SECRET: SecretStr = SecretStr("")
     # Google OAuth "Desktop app" client file and the token created by `python scripts/gmail_cli.py auth`.
     # Relative paths are relative to the project folder. Both locations are git-ignored.
+    JARVIS_SECRETS_DIR: str = "secrets"  # a Google Desktop OAuth client JSON placed here is found by its structure (never by name) when the path below has no file
     JARVIS_GMAIL_CREDENTIALS_PATH: str = ".jarvis/gmail/credentials.json"
     JARVIS_GMAIL_TOKEN_PATH: str = ".jarvis/gmail/token.json"
     # Most emails fetched by one search (JARVIS never downloads a whole mailbox).

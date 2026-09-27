@@ -7,21 +7,22 @@
   3. creates .env from .env.example (never overwrites an existing .env)
   4. creates the logs and state folders
   5. applies database migrations (alembic upgrade head) and checks the database connection
-  6. registers start-with-Windows: a Startup-folder shortcut (default) or a Scheduled Task that also restarts JARVIS if the
-     whole process ever dies (-UseScheduledTask)
+  6. registers start-with-Windows: a per-user Scheduled Task (default: starts at logon after a short delay, has the right working directory, never starts a second
+     copy and restarts JARVIS if the process ever fails); -StartupMethod run|shortcut selects a Run entry or a Startup-folder shortcut instead. Exactly one is
+     ever active.
 
   Nothing here needs administrator rights. It never touches your database contents, .env values or models.
 
 .PARAMETER NoStartup         install only; do not register start-with-Windows
 .PARAMETER SkipMigrations    do not run alembic (for example when PostgreSQL is not set up yet)
-.PARAMETER UseScheduledTask  register a per-user logon Scheduled Task (with restart on failure) instead of the Startup shortcut
+.PARAMETER StartupMethod     task (default) | run | shortcut
 .PARAMETER Python            python launcher to use for the venv (default: python)
 #>
 [CmdletBinding()]
 param(
     [switch]$NoStartup,
     [switch]$SkipMigrations,
-    [switch]$UseScheduledTask,
+    [ValidateSet("task", "run", "shortcut")][string]$StartupMethod = "task",
     [string]$Python = "python"
 )
 
@@ -70,17 +71,8 @@ if (-not $SkipMigrations) {
 
 # 6. Start with Windows
 if (-not $NoStartup) {
-    if ($UseScheduledTask) {
-        $pythonw = Join-Path $root ".venv\Scripts\pythonw.exe"
-        $action = New-ScheduledTaskAction -Execute $pythonw -Argument "-m desktop.launcher" -WorkingDirectory $root
-        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
-        Register-ScheduledTask -TaskName "JARVIS" -Action $action -Trigger $trigger -Settings $settings -Description "JARVIS personal assistant (starts at logon, restarts on failure)" -Force | Out-Null
-        & $venvPython -m desktop.launcher --disable-startup | Out-Null   # avoid starting twice
-        Write-Host "Scheduled Task 'JARVIS' registered (starts at logon, restarts up to 3 times if the process dies)."
-    } else {
-        & $venvPython -m desktop.launcher --enable-startup
-    }
+    & $venvPython (Join-Path $root "scripts\windows\jarvis_launcher.pyw") --enable-startup --startup-method $StartupMethod
+    if ($LASTEXITCODE -ne 0) { Write-Warning "Could not register start-with-Windows. Start JARVIS manually with scripts\windows\start_jarvis.ps1." }
 }
 
 Write-Host ""
