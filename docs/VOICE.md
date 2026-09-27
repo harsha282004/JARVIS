@@ -88,6 +88,31 @@ soon as the microphone is acquired (well before any real speech), so that cost i
 soft-clips (never a harsh digital clip) so raising it is safe, but since Piper is already near full scale, only raise
 it if things genuinely still sound quiet through your actual speakers after the warm-up fix.
 
+**A follow-up fix for the same complaint** (an acknowledgement that sounds like only the *beginning* is audible, or
+cut off): every synthesized utterance — not just the very first one after wake — is now padded with a short run of
+true digital silence before and after it (`voice/audio.py::pad_utterance`, ~120 ms lead / ~80 ms tail). This protects
+the first and last phoneme directly in the buffer handed to the audio driver, which `warm_up()` alone cannot
+guarantee (it only protects the *first* utterance of an activation, not every one, and nothing stops the device from
+going cold again between separate playback calls). The two fixes are complementary, not alternatives.
+
+## Natural-language time and location
+
+"What time is it?", "What's the time now?", "Can you tell me the current time?", "Do you know what time it is?" and
+similar phrasings all resolve to the same deterministic answer — read from the real system clock, **never** a
+guess from Groq's static training data (`agent/intelligence/router.py`'s `_clock_answer`, checked before the LLM is
+ever consulted, so it also works with no internet connection). This is a genuine semantic match (recency + "time" +
+optional "now"/"right now"/"currently"), not a hardcoded sentence list, and it explicitly does *not* fire for an
+unrelated "what time is it" question about a specific thing ("what time is the meeting" is left to the normal
+conversational path).
+
+Location questions ("What time is it in London?", "What's the time in Tokyo?", "What time is it in Canada?") resolve
+through `agent/intelligence/worldtime.py`, a real IANA timezone table — the current time for that place, via
+`datetime.now(ZoneInfo(...))`, never invented. A country with more than one timezone (Canada, the US, Australia,
+Russia, Brazil, and a dozen others) is **never** silently answered with one city's time: JARVIS names the real
+choices and asks which one you mean, e.g. *"Canada has multiple time zones. Do you mean Toronto, Vancouver,
+Calgary, Montreal, or Halifax?"*. A location genuinely not in the table gets an honest "I don't have a time zone for
+that yet" rather than a fabricated answer.
+
 ## Natural-language Gmail questions and follow-ups
 
 JARVIS routes Gmail questions ("what's my last email?", "did I get anything about internships?", "read the newest

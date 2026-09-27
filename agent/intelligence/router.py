@@ -20,6 +20,7 @@ from agent.intelligence.models import Answer, Entity, EntityKind, Provenance, So
 from agent.intelligence.phrasing import join_and, quoted, status_word, when_phrase
 from agent.intelligence.prefs_intents import handle_preference
 from agent.intelligence.service import IntelligenceService
+from agent.intelligence.worldtime import resolve_location_timezone
 from backend.core.logging import get_logger
 from backend.core.security.trust import TrustLevel
 
@@ -90,18 +91,58 @@ _ABOUT = re.compile(r"^(?:what about|tell me about|how about|what(?:'s| is) (?:t
 _ACK = re.compile(r"^(?:acknowledge|dismiss|clear|mark as read) (?:all )?(?:the |my |those |these )?notifications?$")
 
 
-_TIME_Q = re.compile(r"^(?:(?:hey )?jarvis )?(?:what(?:'s| is)? (?:the )?(?:current )?time(?: is it)?(?: (?:now|right now|please))?|what time is it(?: (?:now|right now))?|(?:tell me|give me) the time|do you (?:know|have) the time)$")
+_TIME_Q = re.compile(
+    r"^(?:(?:hey )?jarvis )?"
+    r"(?:"
+    r"what(?:'s| is)? (?:the )?(?:current )?time(?: is it| it is)?(?: (?:now|right now|please|currently))?"
+    r"|what time (?:is it|now)(?: (?:right now|please))?"
+    r"|(?:tell me|give me) (?:the )?(?:current )?time(?: it is)?"
+    r"|(?:tell me|give me) what(?: the| the current)? time (?:is|it is)"
+    r"|do you (?:know|have) (?:the time|what time it is)"
+    r")$"
+)
+# "what time is it in <place>?" and its common variants; <place> is free text, resolved deterministically by
+# agent.intelligence.worldtime (real IANA timezones), never guessed by a language model. Kept as ONE pattern with a
+# captured group -- geography lookup, not a phrase-by-phrase table (see worldtime.py's own docstring).
+_TIME_LOCATION_Q = re.compile(
+    r"^(?:(?:hey )?jarvis )?"
+    r"(?:"
+    r"what(?:'s| is)? (?:the )?(?:current )?time(?: is it| is)? (?:in|for) "
+    r"|what time (?:is it |is )?(?:in|for) "
+    r"|(?:tell me|give me) (?:the )?(?:current )?time (?:in|for) "
+    r"|do you know (?:the )?(?:current )?time (?:in|for) "
+    r")"
+    r"(?P<location>[a-z][a-z .'\-]{1,50}?)"
+    r"(?: (?:now|right now|currently))?\??$"
+)
 _DATE_Q = re.compile(r"^(?:(?:hey )?jarvis )?(?:what(?:'s| is)? (?:the )?(?:date|day)(?: (?:is it|it is))?(?: today)?|what(?:'s| is) today(?:'s date)?|what day is (?:it|today)|what(?:'s| is) today's date)$")
 
 
 def _clock_answer(t: str, now, zone) -> str | None:
-    """Deterministic answer for "what time is it?" / "what's the date?" from the same clock and zone the rest of the assistant uses."""
+    """Deterministic answer for "what time is it?" / "what's the date?" / "what time is it in <place>?" from the same
+    clock the rest of the assistant uses (plain questions) or a real IANA timezone (location questions) -- never a
+    language model's static/guessed idea of the current time."""
     if _TIME_Q.match(t):
         return f"It's {now.astimezone(zone).strftime('%I:%M %p').lstrip('0')}."
+    location_match = _TIME_LOCATION_Q.match(t)
+    if location_match:
+        return _location_time_answer(location_match.group("location"), now)
     if _DATE_Q.match(t):
         local = now.astimezone(zone)
         return f"Today is {local.strftime('%A, %B')} {local.day}, {local.year}."
     return None
+
+
+def _location_time_answer(location: str, now) -> str:
+    lookup = resolve_location_timezone(location)
+    place = location.strip().title()
+    if lookup.ambiguous:
+        choices = join_and(lookup.suggestions[:5]) if lookup.suggestions else "a specific city"
+        return f"{place} has multiple time zones. Do you mean {choices}, or another location?"
+    if lookup.zone is None:
+        return f"I don't have a time zone for {place} yet. Try naming a specific city."
+    local = now.astimezone(lookup.zone)
+    return f"It's {local.strftime('%I:%M %p').lstrip('0')} in {place}."
 
 
 class IntelligenceRouter:

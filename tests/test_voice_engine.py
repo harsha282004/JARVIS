@@ -167,6 +167,22 @@ def test_run_once_speaks_activation_reply_then_response():
     assert tts.spoken == ["Yes?", "final answer"]
 
 
+def test_the_wake_acknowledgement_audio_is_padded_with_silence_before_playback():
+    """Root cause of the "Yes?" clipping complaint: Piper's own output already peaks at 0 dBFS, so this is a
+    playback-path artifact, not a gain problem -- every utterance (including the deterministic "Yes?" acknowledgement,
+    which never depends on Groq) gets true silence padding around it before it reaches the audio output."""
+    out = FakeAudioOutput()
+    engine = VoiceEngine(
+        wakeword=FakeWakeWord(trigger_on_call=1), stt=FakeSTT("a question"), conversation=_conversation(FakeLLM(response="ok")),
+        tts=FakeTTS(), audio_input=FakeAudioInput(), audio_output=out, sample_rate=16000, listen_seconds=1.0, activation_reply="Yes?",
+    )
+    engine.run_once()
+    first_played_samples, first_rate = out.played[0]
+    raw_len = 10  # FakeTTS.synthesize always returns 10 zero samples
+    expected_pad = int(0.12 * first_rate) + int(0.08 * first_rate)
+    assert len(first_played_samples) == raw_len + expected_pad
+
+
 def test_run_once_warms_up_the_audio_output_before_the_wake_ack():
     """Root cause of the "Yes?" volume complaint: the output device's cold-start latency on its first-ever play()
     call can swallow much of a short acknowledgement. warm_up() must run once the microphone is acquired, before

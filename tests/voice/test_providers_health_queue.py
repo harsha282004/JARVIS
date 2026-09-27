@@ -247,6 +247,37 @@ def test_warm_up_failure_is_swallowed_and_retried_on_a_later_call():
     assert backend.calls == 2
 
 
+def test_pad_utterance_adds_true_silence_before_and_after():
+    """Root cause of the "Yes?" clipping complaint being addressed: Piper's own output already peaks at 0 dBFS for
+    every utterance measured, including "Yes?" -- this is a playback-path artifact (the first/last few dozen ms of a
+    freshly opened or torn-down output stream is the least reliable part of it), not a gain problem. A short run of
+    real digital silence around the utterance protects it directly in the buffer handed to the driver."""
+    import voice.audio as audio
+
+    samples = np.full(100, 0.5, dtype=np.float32)
+    padded = audio.pad_utterance(samples, sample_rate=1000, lead_seconds=0.05, tail_seconds=0.02)
+    assert len(padded) == 50 + 100 + 20                              # 50 lead zeros, 100 real samples, 20 tail zeros
+    assert np.all(padded[:50] == 0.0) and np.all(padded[-20:] == 0.0)
+    assert np.array_equal(padded[50:150], samples)                   # the real audio itself is untouched
+
+
+def test_pad_utterance_preserves_dtype_and_handles_empty_input():
+    import voice.audio as audio
+
+    int16_samples = np.full(10, 1000, dtype=np.int16)
+    padded = audio.pad_utterance(int16_samples, sample_rate=1000)
+    assert padded.dtype == np.int16
+    empty = np.array([], dtype=np.float32)
+    assert audio.pad_utterance(empty, sample_rate=1000).size == 0    # nothing to protect; never invents audio
+
+
+def test_pad_utterance_is_a_no_op_when_both_durations_are_zero():
+    import voice.audio as audio
+
+    samples = np.full(5, 0.3, dtype=np.float32)
+    assert audio.pad_utterance(samples, sample_rate=1000, lead_seconds=0, tail_seconds=0) is samples
+
+
 # ---- health ---------------------------------------------------------------------------------------------------------------------------
 
 def test_health_checks_are_refined_by_what_the_engine_observed():

@@ -35,7 +35,7 @@ from backend.core.llm.base import GENERIC_LLM_ERROR, LLMProviderError, describe_
 from backend.core.llm.base import LLM_ERROR_MESSAGES as LLM_ERROR_MESSAGES_
 from backend.core.logging import get_logger
 from backend.core.metrics import metrics
-from voice.audio import AudioInput, AudioOutput
+from voice.audio import AudioInput, AudioOutput, pad_utterance
 from voice.exceptions import AudioDeviceError, VoiceProviderError
 from voice.normalize import Control, control_of, normalize
 from voice.policy import VoicePolicy, clean_for_speech, spoken_version, split_sentences
@@ -268,6 +268,7 @@ class VoiceEngine:
                 self.status.update(tts=TTS.GENERATING)
                 with metrics.timer("tts_synthesis_ms"):
                     samples, rate = self._tts.synthesize(sentence)
+                samples = pad_utterance(samples, rate)  # protects the first/last phoneme from a cold/torn-down output stream
                 self.status.update(tts=TTS.SPEAKING)
                 if first:
                     first = False

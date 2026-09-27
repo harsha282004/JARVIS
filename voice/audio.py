@@ -207,6 +207,29 @@ def _soft_clip(samples: np.ndarray) -> np.ndarray:
     return out
 
 
+_LEAD_SILENCE_SECONDS = 0.12   # protects the first phoneme of a short utterance ("Yes?") from a device/driver cold-start
+_TAIL_SILENCE_SECONDS = 0.08   # a stream torn down the instant the last real sample plays can clip that last sample audibly
+
+
+def pad_utterance(samples: np.ndarray, sample_rate: int, lead_seconds: float = _LEAD_SILENCE_SECONDS,
+                  tail_seconds: float = _TAIL_SILENCE_SECONDS) -> np.ndarray:
+    """A short run of true digital silence before and after `samples`.
+
+    Root cause this exists for: Piper's own output already peaks at 0 dBFS for every utterance measured, including
+    "Yes?" (confirmed: it does not need more gain) -- a short acknowledgement sounding clipped/incomplete is a
+    playback-path artifact (the OS audio stack's first and last few dozen milliseconds of any freshly opened output
+    stream are the least reliable part of it, and a 150 ms clip like "Yes?" has almost no margin to lose there, while
+    a multi-second reply barely notices). `AudioOutput.warm_up()` already primes the stream once before the first
+    real utterance of an activation; this pad protects every individual utterance directly, in the exact buffer
+    handed to the audio driver, which cannot be defeated by timing between separate calls the way a one-off warm-up
+    could be. The padding is true zeros, not the tiny warm-up noise floor, so it adds no audible hiss."""
+    if lead_seconds <= 0 and tail_seconds <= 0:
+        return samples
+    lead = np.zeros(int(lead_seconds * sample_rate), dtype=samples.dtype)
+    tail = np.zeros(int(tail_seconds * sample_rate), dtype=samples.dtype)
+    return np.concatenate([lead, samples, tail]) if samples.size else samples
+
+
 class AudioOutput:
     """Speaker playback that can be stopped at any moment (barge-in).
 
