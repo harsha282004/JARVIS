@@ -535,9 +535,11 @@ def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None
         audio_input=AudioInput(
             sample_rate=settings.AUDIO_SAMPLE_RATE, device=settings.MICROPHONE_DEVICE
         ),
-        # No separate output-device setting in Phase 1 — playback uses the
-        # system default speaker.
-        audio_output=AudioOutput(volume=settings.VOICE_TTS_VOLUME),
+        # Output device is real-validated (voice/speaker.py), not blindly trusted from sounddevice's cached
+        # default -- see that module's docstring for the Bluetooth-default-output incident this fixes.
+        # VOICE_OUTPUT_DEVICE lets a person override it (mirrors MICROPHONE_DEVICE) when their Windows default
+        # is a sometimes-disconnected wireless device.
+        audio_output=AudioOutput(volume=settings.VOICE_TTS_VOLUME, device=settings.VOICE_OUTPUT_DEVICE),
         sample_rate=settings.AUDIO_SAMPLE_RATE,
         listen_seconds=settings.AUDIO_LISTEN_SECONDS,
         announcements=task_system.announcements if task_system is not None else None,
@@ -550,6 +552,7 @@ def build_voice_engine(settings: Settings, task_system: TaskSystem | None = None
         wake=WakeConfig(debounce_seconds=settings.WAKE_DEBOUNCE_SECONDS, direct_threshold=settings.WAKE_DIRECT_THRESHOLD, direct_accept=settings.WAKE_DIRECT_ACCEPT, min_frames=settings.WAKE_MIN_FRAMES,
                         candidate_floor=settings.WAKE_CANDIDATE_FLOOR, stt_confirm=settings.WAKE_STT_CONFIRM, post_tts_block_seconds=settings.VOICE_POST_TTS_WAKE_BLOCK_SECONDS,
                         session_timeout_seconds=settings.VOICE_SESSION_TIMEOUT_SECONDS, sleep_command_enabled=settings.VOICE_SLEEP_COMMAND_ENABLED),
+        ack_settle_seconds=settings.VOICE_ACK_SETTLE_SECONDS,
     )
     if voice is not None:
         voice.engine_interrupt = engine.interrupt

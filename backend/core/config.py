@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # --- Voice: audio I/O ---
     # Empty string or "auto" = the Windows default input device (see voice/mic.py); a device name or index selects one explicitly.
     MICROPHONE_DEVICE: str = ""
+    # "" = auto-resolve (the live Windows default output, validated; see voice/speaker.py). Set this explicitly (a
+    # device name or index from GET /voice's "output" field, or `python scripts/voice_tts_diagnostic.py --list-devices`)
+    # if your Windows default output is a wireless/Bluetooth device that isn't always connected -- JARVIS's short
+    # deterministic wake acknowledgement has no tolerance for a wireless link's wake-up latency.
+    VOICE_OUTPUT_DEVICE: str = ""
     AUDIO_SAMPLE_RATE: int = 16000
     # Fixed capture window for a single utterance after wake-word activation.
     # Phase 3 will replace this with proper end-of-speech detection.
@@ -119,6 +124,11 @@ class Settings(BaseSettings):
     WAKE_MIN_FRAMES: int = Field(default=2, ge=1, le=10)
     WAKE_STT_CONFIRM: bool = True
     VOICE_POST_TTS_WAKE_BLOCK_SECONDS: float = Field(default=1.0, ge=0.0, le=5.0)  # JARVIS's own voice cannot wake it
+    # A small pause after the wake acknowledgement genuinely finishes playing (AudioOutput.play() already blocks
+    # until then) before the microphone starts listening for the command. Not a race-condition fix -- playback is
+    # synchronous and the mic stream is separate hardware -- this is purely a UX cushion so a person's own reaction
+    # time to hearing the acknowledgement isn't immediately clipped into the listening window. 0 disables it.
+    VOICE_ACK_SETTLE_SECONDS: float = Field(default=0.15, ge=0.0, le=2.0)
     VOICE_TTS_SPEED: float = Field(default=1.0, ge=0.5, le=2.0)
     VOICE_TTS_VOLUME: float = Field(default=1.0, ge=0.0, le=2.0)  # above 1.0 amplifies with soft clipping (voice.audio); a real, bounded gain
     # Spoken answers longer than this are shortened for the ear; the full text stays on the dashboard.

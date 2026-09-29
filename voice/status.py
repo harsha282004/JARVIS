@@ -112,6 +112,9 @@ class VoiceStatus:
         self.suppressed: deque[dict] = deque(maxlen=20)   # announcements held back by DND/mute (kept, not lost)
         self.latency: dict[str, float] = {}
         self.degraded: list[str] = []
+        self.speaker: dict | None = None        # resolved output device (voice/speaker.py SpeakerSelection.describe()): name/host_api/rate/status, never audio
+        self.last_ack_duration_ms: float | None = None    # wake-ack ("Yes?") wall time: synth + playback + settle
+        self.last_ack_playback_ms: float | None = None    # wake-ack playback alone (ACK_PLAYBACK_STARTED -> FINISHED)
 
     def update(self, **fields: Any) -> None:
         with self._lock:
@@ -145,6 +148,7 @@ class VoiceStatus:
                 "last_transcription": self.last_transcription, "last_response": self.last_response,
                 "last_error": self.last_error, "interruptions": self.interruptions,
                 "held_notifications": list(self.suppressed), "latency_ms": dict(self.latency), "degraded": list(self.degraded),
+                "speaker": self.speaker, "last_ack_duration_ms": self.last_ack_duration_ms, "last_ack_playback_ms": self.last_ack_playback_ms,
             }
 
 

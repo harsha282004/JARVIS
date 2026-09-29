@@ -77,7 +77,7 @@ def collect(port: int | None) -> dict:
         info["api"] = "ACTIVE"
         status = json.loads(_get(port, "/status", token))
         proc = status.get("process") or {}
-        info.update({"runtime_state": status.get("runtime"), "tray": proc.get("tray"), "startup_source": proc.get("startup_source"), "voice_state": status.get("voice_state"),
+        info.update({"runtime_state": status.get("runtime"), "tray": proc.get("tray"), "tray_health": proc.get("tray_health"), "startup_source": proc.get("startup_source"), "voice_state": status.get("voice_state"),
                      "microphone_active": status.get("microphone_active"), "voice_indicator": status.get("voice_indicator_text"), "overall_health": status.get("overall"),
                      "last_error": status.get("last_error")})
         health = {s["name"]: f'{s["state"]} ({s["detail"]})' for s in json.loads(_get(port, "/health/services", token))["services"]}
@@ -101,10 +101,19 @@ def main() -> int:
         print(json.dumps(info, indent=2, default=str))
     else:
         print(f"JARVIS process: {info['process']}   PID: {info.get('pid')}   Parent PID: {info.get('parent_pid')}   started by: {info.get('startup_source', '-')}")
-        for label, key in (("Runtime state", "runtime_state"), ("Tray", "tray"), ("API", "api"), ("Voice", "voice_state"), ("Microphone", "microphone"), ("Wake listener", "wake_listener"),
+        for label, key in (("Runtime state", "runtime_state"), ("Tray controller", "tray"), ("API", "api"), ("Voice", "voice_state"), ("Microphone", "microphone"), ("Wake listener", "wake_listener"),
                            ("Voice session", "session"), ("Database", "database"), ("Groq / LLM", "llm"), ("Speech recognition", "stt"), ("Speech output", "tts"), ("Overall", "overall_health")):
             if key in info:
                 print(f"{label + ':':20} {info[key]}")
+        th = info.get("tray_health")
+        if th:
+            # "Tray controller: running" only ever meant "pystray's call did not raise" -- this line is the real
+            # signal: whether Windows itself has actually registered the icon (Shell_NotifyIconGetRect), which is
+            # the strongest state this script can verify without visually inspecting the notification area itself.
+            registered = th.get("icon_registered")
+            reg_text = "YES (confirmed with Windows)" if registered is True else "NO" if registered is False else "unknown (not Windows, or not yet checked)"
+            print(f"{'Tray icon window:':20} {'created' if th.get('icon_created') else 'not created'}  (thread alive: {th.get('thread_alive')})")
+            print(f"{'Tray icon registered:':20} {reg_text}" + (f"  -- {th['last_error']}" if th.get("last_error") else ""))
         st = info.get("startup", {})
         print(f"{'Start with Windows:':20} {', '.join(st['methods']) if st.get('methods') else 'disabled'}" + ("  (WARNING: more than one mechanism)" if st.get("duplicate") else ""))
         if st.get("command"):

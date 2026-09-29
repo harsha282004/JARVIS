@@ -179,7 +179,9 @@ def test_the_wake_acknowledgement_audio_is_padded_with_silence_before_playback()
     engine.run_once()
     first_played_samples, first_rate = out.played[0]
     raw_len = 10  # FakeTTS.synthesize always returns 10 zero samples
-    expected_pad = int(0.12 * first_rate) + int(0.08 * first_rate)
+    from voice.audio import _LEAD_SILENCE_SECONDS, _TAIL_SILENCE_SECONDS
+
+    expected_pad = int(_LEAD_SILENCE_SECONDS * first_rate) + int(_TAIL_SILENCE_SECONDS * first_rate)
     assert len(first_played_samples) == raw_len + expected_pad
 
 
@@ -243,6 +245,44 @@ def test_run_forever_recovers_from_provider_error(monkeypatch):
         engine.run_forever()
 
     assert calls["n"] == 2
+
+
+def test_ack_settle_delay_runs_once_after_the_wake_acknowledgement_finishes():
+    """VOICE_ACK_SETTLE_SECONDS: a real cushion after the ack genuinely finishes playing, before the mic starts
+    listening -- not a race fix (playback already blocks), just a UX pause. Must not apply to ordinary responses."""
+    sleeps: list[float] = []
+    engine = VoiceEngine(
+        wakeword=FakeWakeWord(trigger_on_call=1), stt=FakeSTT("a question"), conversation=_conversation(FakeLLM(response="final answer")),
+        tts=FakeTTS(), audio_input=FakeAudioInput(), audio_output=FakeAudioOutput(), sample_rate=16000, listen_seconds=1.0,
+        activation_reply="Yes?", sleep=lambda s: sleeps.append(s), ack_settle_seconds=0.2,
+    )
+    engine.run_once()
+    assert sleeps == [0.2]  # once, only for the ack -- not for the "final answer" response
+
+
+def test_ack_settle_delay_is_skipped_when_configured_to_zero():
+    sleeps: list[float] = []
+    engine = VoiceEngine(
+        wakeword=FakeWakeWord(trigger_on_call=1), stt=FakeSTT("a question"), conversation=_conversation(FakeLLM(response="ok")),
+        tts=FakeTTS(), audio_input=FakeAudioInput(), audio_output=FakeAudioOutput(), sample_rate=16000, listen_seconds=1.0,
+        activation_reply="Yes?", sleep=lambda s: sleeps.append(s), ack_settle_seconds=0.0,
+    )
+    engine.run_once()
+    assert sleeps == []
+
+
+def test_ack_reports_speaker_and_timing_on_the_status():
+    """/voice's `speaker`/`last_ack_duration_ms`/`last_ack_playback_ms` fields come from the real wake ack, not a guess."""
+    out = FakeAudioOutput()
+    out.selection = type("Sel", (), {"describe": staticmethod(lambda: {"device": "Speakers", "status": "ready"})})()
+    engine = VoiceEngine(
+        wakeword=FakeWakeWord(trigger_on_call=1), stt=FakeSTT("a question"), conversation=_conversation(FakeLLM(response="ok")),
+        tts=FakeTTS(), audio_input=FakeAudioInput(), audio_output=out, sample_rate=16000, listen_seconds=1.0, activation_reply="Yes?",
+    )
+    engine.run_once()
+    assert engine.status.speaker == {"device": "Speakers", "status": "ready"}
+    assert engine.status.last_ack_duration_ms is not None and engine.status.last_ack_duration_ms >= 0
+    assert engine.status.last_ack_playback_ms is not None and engine.status.last_ack_playback_ms >= 0
 
 
 def test_run_once_returns_without_cycle_when_stop_requested():

@@ -70,7 +70,8 @@ def status(ctx: AppContext = Depends(authorized)) -> dict:
         "privacy_mode": mode.value,
         "overall": ctx.health.overall().value if ctx.health is not None else None,
         "offline_mode": ctx.settings.JARVIS_OFFLINE_MODE,
-        "process": {"pid": os.getpid(), "parent_pid": os.getppid(), "startup_source": ctx.startup_source, "tray": ctx.app.tray_status if ctx.app is not None else None},
+        "process": {"pid": os.getpid(), "parent_pid": os.getppid(), "startup_source": ctx.startup_source, "tray": ctx.app.tray_status if ctx.app is not None else None,
+                    "tray_health": ctx.app.tray_health if ctx.app is not None else None},
     }
 
 

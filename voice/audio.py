@@ -20,15 +20,6 @@ logger = get_logger(__name__)
 FRAME_SAMPLES = 1280  # 80ms at 16kHz — the chunk size openWakeWord expects
 
 
-def _resolve_device(device: str) -> int | str | None:
-    """Map an empty config value to "use the system default device"."""
-    if not device:
-        return None
-    if device.isdigit():
-        return int(device)
-    return device
-
-
 class AudioInput:
     """Blocking microphone reader, yielding fixed-size int16 mono frames at `sample_rate`.
 
@@ -207,8 +198,12 @@ def _soft_clip(samples: np.ndarray) -> np.ndarray:
     return out
 
 
-_LEAD_SILENCE_SECONDS = 0.12   # protects the first phoneme of a short utterance ("Yes?") from a device/driver cold-start
-_TAIL_SILENCE_SECONDS = 0.08   # a stream torn down the instant the last real sample plays can clip that last sample audibly
+_LEAD_SILENCE_SECONDS = 0.15   # protects the first phoneme of a short utterance ("Yes?") from a device/driver cold-start
+# Measured on a real machine: MME's own reported default_high_output_latency was 0.18 s for the resolved output
+# device. The original 0.08 s tail was comfortably shorter than that -- not long enough to survive a real driver of
+# that latency tearing down/finishing the stream. 0.22 s clears the measured figure with margin and is still
+# inaudible (true silence, not noise).
+_TAIL_SILENCE_SECONDS = 0.22
 
 
 def pad_utterance(samples: np.ndarray, sample_rate: int, lead_seconds: float = _LEAD_SILENCE_SECONDS,
@@ -245,10 +240,38 @@ class AudioOutput:
     """
 
     def __init__(self, device: str = "", volume: float = 1.0, backend=None):
-        self._device = _resolve_device(device)
+        self._config = device
         self.volume = volume
         self._sd = backend if backend is not None else sd
         self._warmed = False
+        self.selection = self._resolve()
+
+    def _resolve(self):
+        """Real device resolution (voice/speaker.py), not blind trust in whatever index `sounddevice` hands back --
+        see that module's docstring for the real Bluetooth-default-output incident this exists because of. Logged
+        exactly like the microphone's own resolution (`voice.audio` "Microphone: ..."), so the actual output device
+        is always visible, never silently assumed. Re-run on demand via `reselect()` (e.g. after a device change).
+        A backend that cannot enumerate devices (a minimal test double, or a real but unusual PortAudio build) falls
+        back to `device=None` -- exactly the old "let sounddevice pick" behavior -- rather than failing to construct."""
+        from voice.speaker import SpeakerDeviceManager, SpeakerSelection
+
+        try:
+            selection = SpeakerDeviceManager(self._sd).resolve(self._config)
+        except Exception:  # noqa: BLE001 - device resolution must never prevent AudioOutput from existing
+            return SpeakerSelection("auto", None, status="unknown")
+        if selection.device is not None:
+            logger.info("Speaker: %s", selection.describe())
+        else:
+            logger.warning("No usable audio output device found (tried: %s)", "; ".join(selection.tried[:6]) or "none")
+        return selection
+
+    def reselect(self) -> None:
+        """Re-run output device resolution (e.g. after Windows reports a device change). Safe to call anytime."""
+        self.selection = self._resolve()
+
+    @property
+    def _device(self):
+        return self.selection.device.index if self.selection.device is not None else None
 
     def warm_up(self) -> None:
         """Play a near-silent, brief clip so the OS output stream is already open by the time real speech is spoken.

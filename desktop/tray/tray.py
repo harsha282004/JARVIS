@@ -12,7 +12,9 @@ Menu:
     Pause listening (Resume listening) - Private mode - Restart JARVIS - Exit
 """
 
+import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -27,6 +29,54 @@ from desktop.runtime.state import RuntimeState, RuntimeStatus
 from desktop.tray.status import TrayState, TrayView, compute_tray_view
 
 logger = get_logger(__name__)
+
+# In-process retries for a transient "Explorer's tray isn't ready to accept the icon yet" failure (real right after
+# logon / a Task-Scheduler-triggered launch) before treating it as a genuine failure that TrayKeeper should back off
+# and retry for (see `_verify_registration`'s docstring for why this check exists at all).
+_REGISTER_RETRY_DELAYS = (0.2, 0.5, 1.0)
+
+
+def _icon_registered_with_windows(hwnd: int, uid: int = 0) -> bool | None:
+    """True/False if Windows Explorer genuinely has this notify icon registered (`Shell_NotifyIconGetRect`), or
+    None if the check itself could not run (not Windows, or the API call failed for a reason unrelated to the icon).
+    None must never be treated as "registered" by a caller.
+
+    This exists because of a real, confirmed bug in pystray's Windows backend: `_win32.Icon._message()` calls
+    `Shell_NotifyIcon(NIM_ADD, ...)` and never checks its BOOL return value, so if that call fails -- e.g. because
+    Explorer's notification-area window is not yet ready to accept it, which really happens for a few seconds right
+    after logon or a Task-Scheduler-triggered interactive launch, exactly this project's real startup path -- pystray
+    proceeds exactly as if the icon were showing. `TrayController.start()`'s own `ready` event (see below) only ever
+    reflects "pystray's call did not raise", which is a different and weaker claim than "Windows is showing this
+    icon somewhere (including the hidden-icons overflow)". `Shell_NotifyIconGetRect` is the documented, official way
+    a process can ask Windows whether ITS OWN notify icon is currently registered, and works for an icon in either
+    the visible tray or the overflow -- it is not affected by which one Windows chose.
+
+    (Separately, and harmlessly: pystray also passes `hID=` -- a field name that does not exist on
+    `NOTIFYICONDATAW`, whose real field is `uID` -- so every pystray icon's uID is silently left at its default of 0,
+    not `id(icon)` as pystray's own docstring implies. That does not stop the icon from displaying (0 is a legal
+    uID), but it does mean `uid=0` here is not a guess -- it is the value pystray actually uses for every icon.)
+    """
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    class _GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+    class _NOTIFYICONIDENTIFIER(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND), ("uID", wintypes.UINT), ("guidItem", _GUID)]
+
+    try:
+        identifier = _NOTIFYICONIDENTIFIER(cbSize=ctypes.sizeof(_NOTIFYICONIDENTIFIER), hWnd=wintypes.HWND(hwnd), uID=uid)
+        rect = _RECT()
+        hres = ctypes.windll.shell32.Shell_NotifyIconGetRect(ctypes.byref(identifier), ctypes.byref(rect))
+        return hres == 0  # S_OK
+    except Exception:  # noqa: BLE001 - a diagnostic must never crash tray startup or refresh
+        return None
 
 TRAY_READY_TIMEOUT_SECONDS = 5.0
 MAX_BALLOON_CHARS = 250  # Windows notification balloons truncate longer text
@@ -119,37 +169,118 @@ class TrayController:
         self._overall = overall or (lambda: None)
         self._privacy_mode = privacy_mode or (lambda: PrivacyMode.ACTIVE)
         self._icon: pystray.Icon | None = None
+        # Real Windows registration state (see `_icon_registered_with_windows`), not just "TrayController exists" or
+        # "pystray's call didn't raise" -- None until the first verification has run.
+        self._icon_registered: bool | None = None
+        self._last_verify_error = ""
+        self._registered_at: float | None = None
 
     # ---- lifecycle -------------------------------------------------------------------------------------------------------
 
     def start(self) -> None:
-        """Show the tray icon. Raises TrayError if it does not come up."""
+        """Show the tray icon. Raises TrayError if it does not come up -- including if pystray's own `NIM_ADD` call
+        silently failed to register with Windows (see `_icon_registered_with_windows`'s docstring): that failure
+        used to be invisible, reported as `TRAY_STATUS=running` with no Windows icon actually showing anywhere. Now
+        it raises here, so `TrayKeeper`'s existing backoff retry loop actually runs instead of never firing."""
         ready = threading.Event()
 
         def setup(icon: pystray.Icon) -> None:
             icon.visible = True
+            logger.info("TRAY_ICON_RUN_ENTERED")
+            self._verify_registration(icon)
             ready.set()
 
         try:
             view = self.view()
             self._icon = pystray.Icon("jarvis", render_icon(view.state), self._title(view), menu=self._build_menu())
+            logger.info("TRAY_ICON_CREATED")
             self._icon.run_detached(setup)
         except Exception as exc:  # noqa: BLE001 - pystray backends raise assorted platform errors
             self._icon = None
+            logger.error("TRAY_EXCEPTION phase=create (%s)", type(exc).__name__)
             raise TrayError(f"Could not create the system tray icon: {exc}") from exc
 
         if not ready.wait(TRAY_READY_TIMEOUT_SECONDS):
             self.stop()
             raise TrayError("System tray icon did not initialize in time")
 
+        if self._icon_registered is False:
+            detail = f": {self._last_verify_error}" if self._last_verify_error else ""
+            self.stop()
+            raise TrayError(f"Windows did not register the tray icon (Shell_NotifyIcon add was not confirmed){detail}")
+
         self._manager.add_listener(lambda status: self.refresh())
+        logger.info("TRAY_ICON_VISIBLE registered=%s", self._icon_registered)
         logger.info("Tray initialized")
 
     def stop(self) -> None:
         icon, self._icon = self._icon, None
+        self._icon_registered = None
         if icon is not None:
             icon.stop()
             logger.info("Tray stopped")
+
+    def _verify_registration(self, icon: pystray.Icon) -> None:
+        """Confirms Windows itself will show the icon (possibly inside Hidden Icons), not just that pystray's call
+        did not raise. A transient "Explorer's tray isn't ready yet" failure is retried briefly in-process first."""
+        hwnd = getattr(icon, "_hwnd", None)  # pystray exposes no public accessor for this; see module docstring
+        if hwnd is None:
+            self._icon_registered = None  # not Windows, or a pystray internal we don't recognise: nothing to verify
+            return
+        for attempt, delay in enumerate((*_REGISTER_RETRY_DELAYS, None)):
+            result = _icon_registered_with_windows(int(hwnd))
+            if result is not False:
+                self._icon_registered = result
+                self._registered_at = time.monotonic() if result else None
+                return
+            if delay is not None:
+                time.sleep(delay)
+        self._icon_registered = False
+        self._last_verify_error = "Shell_NotifyIconGetRect could not find the icon after NIM_ADD"
+        logger.warning("TRAY_ICON_NOT_REGISTERED %s", self._last_verify_error)
+
+    def _reverify_registration(self, icon: pystray.Icon) -> None:
+        """Called from `refresh()` (on every runtime/health tick, not just at startup) to catch the icon later
+        disappearing from Windows -- e.g. Explorer restarting. pystray does listen for `WM_TASKBARCREATED` and
+        re-adds the icon automatically, but that re-add has the exact same unchecked-return-value blind spot as the
+        original one, so it is re-verified here too, with one self-heal attempt (toggle the icon off and back on)
+        rather than assuming pystray's own recovery worked."""
+        hwnd = getattr(icon, "_hwnd", None)
+        if hwnd is None:
+            return
+        was_registered = self._icon_registered
+        now = _icon_registered_with_windows(int(hwnd))
+        if now is None:
+            return
+        self._icon_registered = now
+        if now:
+            self._registered_at = self._registered_at or time.monotonic()
+            return
+        if was_registered:
+            logger.warning("TRAY_ICON_LOST attempting to re-register (Explorer may have restarted)")
+        try:
+            icon.visible = False
+            icon.visible = True
+        except Exception as exc:  # noqa: BLE001 - a refresh must never crash the runtime
+            logger.warning("TRAY_ICON_READD_FAILED (%s)", type(exc).__name__)
+            return
+        self._icon_registered = _icon_registered_with_windows(int(hwnd))
+        self._registered_at = time.monotonic() if self._icon_registered else None
+        logger.info("TRAY_ICON_READD result=%s", self._icon_registered)
+
+    def health(self) -> dict:
+        """Real tray health for `/status` and `jarvis_status.py` -- distinguishes "TrayController exists" from
+        "Windows has actually registered the icon", per the whole reason this module was audited."""
+        icon = self._icon
+        thread = getattr(icon, "_thread", None) if icon is not None else None
+        return {
+            "controller": "running" if icon is not None else "stopped",
+            "icon_created": icon is not None,
+            "thread_alive": bool(thread and thread.is_alive()) if icon is not None else False,
+            "icon_registered": self._icon_registered,
+            "registered_at": self._registered_at,
+            "last_error": self._last_verify_error,
+        }
 
     def view(self) -> TrayView:
         status: RuntimeStatus = self._manager.status()
@@ -160,7 +291,9 @@ class TrayController:
         return True if reader is None else bool(reader())
 
     def refresh(self) -> None:
-        """Re-read the real state and update the icon, tooltip and menu. Called on runtime and health changes."""
+        """Re-read the real state and update the icon, tooltip and menu. Called on runtime and health changes
+        (and, via the periodic health tick, roughly every `JARVIS_HEALTH_INTERVAL_SECONDS`), which also makes this
+        the periodic re-verification of Windows registration (`_reverify_registration`) -- no separate thread needed."""
         icon = self._icon
         if icon is None:
             return
@@ -169,6 +302,7 @@ class TrayController:
             icon.icon = render_icon(view.state)
             icon.title = self._title(view)
             icon.update_menu()
+            self._reverify_registration(icon)
         except Exception as exc:  # noqa: BLE001 - a cosmetic refresh must never crash the runtime
             logger.warning("Tray refresh failed (%s)", type(exc).__name__)
 

@@ -87,6 +87,24 @@ If the tray cannot be created, the runtime logs the error and exits with code 1
 rather than running invisibly with no way to stop it. Set
 `JARVIS_TRAY_ENABLED=false` to run headless deliberately (Ctrl+C to stop).
 
+### The icon can be genuinely absent even when everything looks "running"
+
+A confirmed bug in pystray's Windows backend: `Shell_NotifyIcon(NIM_ADD, ...)` (the call that actually asks Explorer
+to show the icon) never checks its own success/failure return value. If that call fails -- which really happens for
+a few seconds right after logon, or right after a Task-Scheduler-triggered interactive launch (this project's real
+startup path) -- pystray proceeds exactly as if the icon were showing. Before this was fixed, JARVIS's own logs and
+`jarvis_status.py` could say `TRAY_STATUS=running` while the Windows notification area (including the hidden-icons
+overflow) had no JARVIS icon at all.
+
+`TrayController` now independently confirms this with `Shell_NotifyIconGetRect` (the documented, official way a
+process can ask Windows whether its own notify icon is currently registered) right after `NIM_ADD`, retries briefly
+in-process for a transient "Explorer's tray isn't ready yet" failure, and re-verifies on every periodic health tick
+(self-healing -- toggling the icon off/on -- if it ever finds the icon gone later, e.g. after an Explorer restart). A
+genuine failure now raises `TrayError`, so `TrayKeeper`'s existing capped-backoff retry loop (2s/4s/8s/15s/30s)
+actually runs instead of never firing. `jarvis_status.py` and `/status`'s `process.tray_health` report the real,
+independently-verified state (`icon_registered: true/false/null`), separately from the older `tray` field (which
+only ever meant "TrayController.start() did not raise").
+
 ## Pause / resume
 
 Pause stops the worker at the next wake-word poll (~80 ms while waiting;

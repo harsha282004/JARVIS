@@ -102,6 +102,7 @@ class VoiceEngine:
         sleep: Callable[[float], None] = time.sleep,
         wake: WakeConfig | None = None,
         clock: Callable[[], float] = time.monotonic,
+        ack_settle_seconds: float = 0.15,
     ):
         self._wakeword = wakeword
         self._stt = stt
@@ -112,6 +113,7 @@ class VoiceEngine:
         self._sample_rate = sample_rate
         self._listen_seconds = listen_seconds
         self._activation_reply = activation_reply
+        self._ack_settle_seconds = ack_settle_seconds
         self._announcements = announcements
         self._store = settings
         self._use_vad = use_vad
@@ -244,9 +246,15 @@ class VoiceEngine:
 
     # ---- speech ------------------------------------------------------------------------------------------------------------
 
-    def _speak(self, text: str, *, kind: str = "response", monitor: bool = True) -> bool:
+    def _speak(self, text: str, *, kind: str = "response", monitor: bool = True, ack: bool = False) -> bool:
         """Say `text` (sentence by sentence). Returns True if it was interrupted. A failure to synthesize or play is recorded
-        and reported on the status (the text is still on the dashboard); it never crashes the voice loop."""
+        and reported on the status (the text is still on the dashboard); it never crashes the voice loop.
+
+        `ack=True` (the wake acknowledgement only, e.g. "Yes?") adds dedicated ACK_* monotonic-clock log lines so the
+        real synth/playback split of a real activation can be read straight from the logs, and applies a short settling
+        delay (VOICE_ACK_SETTLE_SECONDS) after playback genuinely finishes -- `_play()` already blocks until then
+        (`AudioOutput.play()` calls `sd.wait()`), so this is not closing a race with the mic capture that follows it;
+        it is a deliberate cushion for a person's own reaction time to hearing "Yes?"."""
         s = self._settings()
         spoken, shortened = spoken_version(text, s.spoken_max_chars) if kind == "response" else (clean_for_speech(text), False)
         if not spoken:
@@ -257,9 +265,13 @@ class VoiceEngine:
             return False
         self._set_state(VoiceState.SPEAKING)
         logger.info("TTS_STARTED length=%d kind=%s shortened=%s", len(spoken), kind, shortened)
+        ack_t0 = time.monotonic()
+        if ack:
+            logger.info("ACK_STARTED")
         interrupted = False
         started = time.perf_counter()
         first = True
+        ack_playback_ms: float | None = None
         try:
             for sentence in split_sentences(spoken) or [spoken]:
                 if self._interrupt.is_set():
@@ -273,9 +285,19 @@ class VoiceEngine:
                 if first:
                     first = False
                     self.status.set_latency("time_to_first_audio_ms", (time.perf_counter() - started) * 1000)
+                if ack:
+                    logger.info("ACK_TTS_READY duration_ms=%.1f", (time.monotonic() - ack_t0) * 1000)
+                    logger.info("ACK_PLAYBACK_STARTED")
+                play_t0 = time.monotonic()
                 if self._play(samples, rate, monitor):
                     interrupted = True
+                    if ack:
+                        ack_playback_ms = (time.monotonic() - play_t0) * 1000
+                        logger.info("ACK_PLAYBACK_FINISHED interrupted=True duration_ms=%.1f", ack_playback_ms)
                     break
+                if ack:
+                    ack_playback_ms = (time.monotonic() - play_t0) * 1000
+                    logger.info("ACK_PLAYBACK_FINISHED duration_ms=%.1f", ack_playback_ms)
         except (VoiceProviderError, AudioDeviceError, OSError, RuntimeError) as exc:
             logger.error("TTS_FAILED (%s)", type(exc).__name__)
             self.status.update(tts=TTS.ERROR, last_error=f"Speech output failed ({type(exc).__name__}); the answer is on the dashboard")
@@ -290,6 +312,14 @@ class VoiceEngine:
             metrics.incr("voice.interruptions")
             self._log.event("interrupted", session_id=self._session_id, state="speaking")
         logger.info("TTS_%s", "INTERRUPTED" if interrupted else "COMPLETED")
+        if ack:
+            total_ms = (time.monotonic() - ack_t0) * 1000
+            logger.info("ACK_TOTAL_DURATION_MS=%.1f", total_ms)
+            describe = getattr(getattr(self._audio_output, "selection", None), "describe", None)
+            self.status.update(last_ack_duration_ms=round(total_ms, 1), last_ack_playback_ms=None if ack_playback_ms is None else round(ack_playback_ms, 1),
+                               speaker=describe() if callable(describe) else self.status.speaker)
+            if not interrupted and self._ack_settle_seconds > 0:
+                self._sleep(self._ack_settle_seconds)  # settling cushion before the mic starts listening for the command
         return interrupted
 
     def _play(self, samples: np.ndarray, rate: int, monitor: bool) -> bool:
@@ -600,7 +630,7 @@ class VoiceEngine:
             logger.info("LISTENING_STARTED duration_s=%s", self._listen_seconds)
             self._interrupt.clear()
             with metrics.timer("wake_to_prompt_ms"):  # wake word heard -> "Yes?" has been synthesized and played
-                self._speak(self._activation_reply, kind="prompt", monitor=False)
+                self._speak(self._activation_reply, kind="prompt", monitor=False, ack=True)
             try:
                 response = self._converse(stack, should_stop)
             except AudioDeviceError as exc:
@@ -707,7 +737,7 @@ class VoiceEngine:
                 # of habit); that must re-acknowledge, once, not be discarded as noise.
                 if confirm_phrase(text)[0]:
                     self._interrupt.clear()
-                    self._speak(self._activation_reply, kind="prompt", monitor=False)
+                    self._speak(self._activation_reply, kind="prompt", monitor=False, ack=True)
                     self._idle_audio = 0.0
                     utterance, status, _ = self._capture(timeout, should_stop)
                     continue

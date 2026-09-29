@@ -90,10 +90,48 @@ it if things genuinely still sound quiet through your actual speakers after the 
 
 **A follow-up fix for the same complaint** (an acknowledgement that sounds like only the *beginning* is audible, or
 cut off): every synthesized utterance — not just the very first one after wake — is now padded with a short run of
-true digital silence before and after it (`voice/audio.py::pad_utterance`, ~120 ms lead / ~80 ms tail). This protects
-the first and last phoneme directly in the buffer handed to the audio driver, which `warm_up()` alone cannot
-guarantee (it only protects the *first* utterance of an activation, not every one, and nothing stops the device from
-going cold again between separate playback calls). The two fixes are complementary, not alternatives.
+true digital silence before and after it (`voice/audio.py::pad_utterance`, 150 ms lead / 220 ms tail — the tail was
+raised from an original 80 ms after measuring the resolved output device's own `default_high_output_latency` at
+0.18 s on a real machine; 220 ms clears that with margin). This protects the first and last phoneme directly in the
+buffer handed to the audio driver, which `warm_up()` alone cannot guarantee (it only protects the *first* utterance
+of an activation, not every one, and nothing stops the device from going cold again between separate playback calls).
+The two fixes are complementary, not alternatives.
+
+### The output device itself can be the real cause
+
+`voice/speaker.py` resolves and *validates* (`sounddevice.check_output_settings`, a real stream negotiation) the
+output device JARVIS actually plays through — mirroring how `voice/mic.py` already validates the microphone — instead
+of blindly trusting whatever `sounddevice`/PortAudio hands back as "the default". This exists because of a real
+incident: on one machine, both MME's cached default *and* the Windows-WASAPI host API's own **live** default agreed
+that the configured Windows default output was a **paired Bluetooth headset**, not the laptop's speakers. A Bluetooth
+sink that is paired but not actively awake has real link wake-up latency (its low-power sniff mode has to
+renegotiate) that can consume most or all of a ~150 ms clip like "Yes?" while barely denting a multi-second reply —
+exactly this symptom. The resolved device is logged (`Speaker: {...}`) and reported on `/voice`'s `speaker` field
+(name/host_api/sample_rate/status only, never audio), so a Bluetooth/disconnected/stale default is now visible
+instead of silently assumed.
+
+If your Windows default output really is a sometimes-disconnected wireless device, set `VOICE_OUTPUT_DEVICE` (a
+device name or index — same convention as `MICROPHONE_DEVICE`; list them with
+`python scripts/voice_tts_diagnostic.py --list-devices`) to pin JARVIS to a wired device. This is never done
+automatically — JARVIS does not override your actual Windows-configured default output on its own.
+
+`VOICE_ACK_SETTLE_SECONDS` (default 0.15 s) is a small pause after the wake acknowledgement genuinely finishes
+playing (`AudioOutput.play()` already blocks until then — this is not closing a playback/mic race) before the
+microphone starts listening for the command, purely as a reaction-time cushion.
+
+### Measuring it for real: `scripts/voice_tts_diagnostic.py`
+
+```
+python scripts/voice_tts_diagnostic.py --text "Yes?"              # measure only (no audio hardware needed)
+python scripts/voice_tts_diagnostic.py --text "Yes?" --play        # REAL playback through the real resolved device
+python scripts/voice_tts_diagnostic.py --compare-phrases           # "Yes?" vs longer/alternate acknowledgements
+python scripts/voice_tts_diagnostic.py --list-devices              # output devices + which one JARVIS resolves to
+```
+
+It prints duration, peak, RMS, leading/trailing silence, clipping % and (best-effort, via `pycaw` if installed)
+Windows system volume/mute — for both the raw Piper buffer and the exact padded buffer `AudioOutput` plays. It never
+asserts pass/fail on its own: only actually listening (`--play`) or a real "Hey JARVIS" test can say whether "Yes?"
+was genuinely heard.
 
 ## Natural-language time and location
 

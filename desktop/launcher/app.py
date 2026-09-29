@@ -171,6 +171,17 @@ class JarvisApplication:
     def tray_status(self) -> str:
         return self._tray_keeper.status
 
+    @property
+    def tray_health(self) -> dict:
+        """The real tray state (TrayController.health()): distinguishes "TrayKeeper thinks the tray started" from
+        "Windows has actually registered the icon" -- see desktop/tray/tray.py for why that distinction is real."""
+        if self._tray is None:
+            return {"controller": "disabled", "icon_created": False, "thread_alive": False, "icon_registered": None, "registered_at": None, "last_error": ""}
+        health = self._tray.health()
+        health["keeper_status"] = self._tray_keeper.status
+        health["keeper_attempts"] = self._tray_keeper.attempts
+        return health
+
     def request_exit(self, reason: str = "user_exit", detail: str = "") -> None:
         if self._coordinator is not None:
             self._coordinator.request(reason, detail)
